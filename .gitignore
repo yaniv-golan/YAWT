@@ -26,3 +26,6 @@ dist/
 .ipynb_checkpoints/
 test-trans-ctx_transcription.txt
 testdata/test-trans-ctx.m4a
+test-trans-ctx_transcript.json
+test-trans-ctx_transcription-v2.txt
+test-trans-ctx_transcription.srt
