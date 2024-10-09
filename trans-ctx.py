@@ -273,7 +273,7 @@ def wait_for_diarization_job(api_token, job_id, check_interval=5, max_retries=3,
         
         if job_status == 'succeeded':
             logging.info(f"\nDiarization job completed successfully after {elapsed_time} seconds.")
-            print(f"\nSpeaker recogition complete.")
+            print(f"\nSpeaker recogמition complete.")
             return job_info
         elif job_status == 'failed':
             logging.error(f"\nDiarization job failed after {elapsed_time} seconds.")
@@ -429,7 +429,6 @@ def main():
     
     args = parser.parse_args()
 
-    # {{ edit_4: Define log_level based on debug and verbose flags }}
     if args.debug:
         log_level = logging.DEBUG
     elif args.verbose:
@@ -437,7 +436,6 @@ def main():
     else:
         log_level = logging.WARNING
 
-    # {{ edit_2: Create log file only if --verbose or --debug is specified }}
     if args.debug or args.verbose:
         log_file = os.path.join(log_directory, f"transcription_log_{current_time}.log")
         logging.basicConfig(
@@ -484,12 +482,14 @@ def main():
     # Load the specified model (only once)
     model, processor, device, torch_dtype = load_and_optimize_model(model_id)
 
-    # {{ edit_1: Conditional handling based on user input }}
+    if hasattr(model.config, 'forced_decoder_ids'):
+        model.config.forced_decoder_ids = None
+        logging.info("Removed forced_decoder_ids from model config.")
+
     if args.audio_url:
         audio_url = args.audio_url
         logging.info(f"Using provided audio URL: {audio_url}")
 
-        # {{ edit_2: Download the audio file locally for Whisper model }}
         local_audio_path = download_audio(audio_url)
         logging.info(f"Downloaded audio for transcription: {local_audio_path}")
     else:
@@ -537,7 +537,6 @@ def main():
             raise Exception("No diarization results found.")
         
         logging.info(f"Diarization completed. Found {len(diarization_segments)} segments.")
-        print(f"Speaker recognition completed.")
     except Exception as e:
         logging.error(f"Diarization failed: {e}")
         # Cleanup downloaded audio if it was downloaded
@@ -567,10 +566,10 @@ def main():
     # Load and optimize the Whisper model
     model, processor, device, torch_dtype = load_and_optimize_model(model_id)
     
-    # At the beginning of your script, after model initialization:
+    # Ensure forced_decoder_ids is not set after model initialization
     if hasattr(model.config, 'forced_decoder_ids'):
-        logging.info("Removing forced_decoder_ids from model config")
         model.config.forced_decoder_ids = None
+        logging.info("Removed forced_decoder_ids from model config after loading.")
 
     # Prepare context prompt
     prompt = args.context_prompt
@@ -667,8 +666,9 @@ def main():
                 else:
                     generate_kwargs["language"] = None
 
-                # Ensure forced_decoder_ids is not set
-                generate_kwargs.pop('forced_decoder_ids', None)
+                if 'forced_decoder_ids' in generate_kwargs:
+                    del generate_kwargs['forced_decoder_ids']
+                    logging.debug("Removed forced_decoder_ids from generate_kwargs.")
 
                 logging.info(f"Generate kwargs: {generate_kwargs}")
                 logging.info(f"Model config forced_decoder_ids: {getattr(model.config, 'forced_decoder_ids', None)}")
@@ -735,7 +735,10 @@ def main():
         for info in speaker_mapping.values()
     ]
 
-    # Build and write text transcription if requested
+    # Initialize the output_files list before writing transcription files
+    output_files = []
+
+    # Write text transcription
     if 'text' in args.output_format:
         text_output_file = f"{base_name}_transcription.txt"
         try:
@@ -743,10 +746,11 @@ def main():
                 for segment in transcription_segments:
                     f.write(f"[{segment['start']:.2f} - {segment['end']:.2f}] {segment['speaker_id']}: {segment['text']}\n")
             logging.info(f"Text transcription written to {text_output_file}")
+            output_files.append(text_output_file)  # Add to output_files
         except Exception as e:
             logging.error(f"Failed to write text transcription to file: {e}")
-    
-    # Build and write SRT transcription if requested
+
+    # Write SRT transcription
     if 'srt' in args.output_format:
         srt_output_file = f"{base_name}_transcription.srt"
         try:
@@ -761,24 +765,30 @@ def main():
             with open(srt_output_file, 'w', encoding='utf-8') as f:
                 f.write(srt_content)
             logging.info(f"SRT transcription written to {srt_output_file}")
+            output_files.append(srt_output_file)  # Add to output_files
         except Exception as e:
             logging.error(f"Failed to write SRT transcription to file: {e}")
 
-    # Build output JSON if requested
+    # Write JSON transcription
     if 'json' in args.output_format:
+        json_output_file = f"{base_name}_transcript.json"
         output_data = {
             'speakers': speakers,
             'transcript': transcription_segments
         }
 
-        # Write transcription to JSON file
-        json_output_file = f"{base_name}_transcript.json"
         try:
             with open(json_output_file, 'w', encoding='utf-8') as f:
                 json.dump(output_data, f, indent=2)
             logging.info(f"JSON transcription written to {json_output_file}")
+            output_files.append(json_output_file)  # Add to output_files
         except Exception as e:
             logging.error(f"Failed to write JSON transcription to file: {e}")
+
+    if output_files:
+        print("\nGenerated Output Files:")
+        for file in output_files:
+            print(f"- {file}")
 
     # Output the actual cost based on processed duration
     print(f"\n---\nTotal audio duration: {total_duration:.2f} seconds")
@@ -787,9 +797,7 @@ def main():
     print(f"Whisper transcription cost (@ ${cost_per_minute}/minute): ${whisper_cost:.4f} USD")
     print(f"Total estimated cost: ${total_cost:.4f} USD\n")
 
-    if not args.audio_url:
-        logging.info("No need to delete downloaded audio since local file was used.")
-    else:
+    if args.audio_url:
         # Existing cleanup code for downloaded audio
         logging.info("Cleaning up temporary downloaded audio file...")
         try:
@@ -797,6 +805,8 @@ def main():
             logging.info(f"Deleted temporary audio file: {local_audio_path}")
         except Exception as e:
             logging.warning(f"Failed to delete temporary audio file: {e}")
+    else:
+        logging.info("No need to delete downloaded audio since local file was used.")
 
     logging.info("Transcription process completed successfully.")
     logging.info(f"Transcription completed. Total segments: {len(transcription_segments)}")
@@ -812,8 +822,6 @@ def main():
     else:
         args.output_format = ['text']  # Default format
     
-    # {{ edit_1: List the output files that were created }}
-    output_files = []
     if 'text' in args.output_format:
         output_files.append(text_output_file)
     if 'srt' in args.output_format:
