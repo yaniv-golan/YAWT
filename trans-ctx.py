@@ -245,19 +245,8 @@ def main():
         pyannote_token = args.pyannote_token or os.getenv("PYANNOTE_TOKEN")
         openai_key = args.openai_key or os.getenv("OPENAI_KEY")
 
-        # Verify PyAnnote Token
-        if not pyannote_token:
-            logging.error("PyAnnote token is not set. Please provide it via --pyannote-token or PYANNOTE_TOKEN environment variable.")
-            sys.exit(1)
-        else:
-            logging.debug("PyAnnote token successfully retrieved.")
-
-        # Verify OpenAI Key
-        if not openai_key:
-            logging.error("OpenAI key is not set. Please provide it via --openai-key or OPENAI_KEY environment variable.")
-            sys.exit(1)
-        else:
-            logging.debug("OpenAI key successfully retrieved.")
+        # Check if API tokens are set
+        check_api_tokens(pyannote_token, openai_key)
 
         # Validate output formats
         try:
