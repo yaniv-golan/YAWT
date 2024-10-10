@@ -1,11 +1,77 @@
 import logging
 import concurrent.futures
 import torch
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 from tqdm import tqdm
-from config import GENERATE_TIMEOUT, MAX_TARGET_POSITIONS, BUFFER_TOKENS
+from config import GENERATE_TIMEOUT, MAX_TARGET_POSITIONS, BUFFER_TOKENS, DEFAULT_MODEL_ID
 
 class TimeoutException(Exception):
     pass
+
+def get_device():
+    """
+    Determines the available device for computation: CUDA, MPS, or CPU.
+
+    Returns:
+        torch.device: The selected device.
+    """
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        return torch.device("mps")
+    else:
+        return torch.device("cpu")
+
+def load_and_optimize_model(model_id=DEFAULT_MODEL_ID):
+    """
+    Loads and optimizes the speech-to-text model.
+
+    Args:
+        model_id (str): The identifier for the model to load.
+
+    Returns:
+        tuple: Contains the model, processor, device, and torch data type.
+    """
+    try:
+        logging.info(f"Loading model '{model_id}'...")
+        device = get_device()
+        torch_dtype = torch.float16 if device.type in ["cuda", "mps"] else torch.float32
+
+        model = AutoModelForSpeechSeq2Seq.from_pretrained(
+            model_id,
+            torch_dtype=torch_dtype,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+            attn_implementation="sdpa"
+        ).to(device)
+
+        if device.type in ["cuda", "mps"] and model.dtype != torch.float16:
+            model = model.half()
+            logging.info("Converted model to float16.")
+
+        processor = AutoProcessor.from_pretrained(model_id)
+        logging.info(f"Model loaded on {device} with dtype {model.dtype}.")
+
+        import warnings
+        warnings.filterwarnings("ignore", category=FutureWarning, module="transformers.modeling_utils")
+        warnings.filterwarnings("ignore", category=UserWarning, module="transformers.models.whisper.modeling_whisper")
+
+        # Optimize model
+        try:
+            model = torch.compile(model, mode="reduce-overhead")
+            logging.info("Model optimized with torch.compile.")
+        except Exception as e:
+            logging.error(f"Model optimization failed: {e}")
+
+        # Remove forced_decoder_ids if present
+        if hasattr(model.config, 'forced_decoder_ids'):
+            model.config.forced_decoder_ids = None
+            logging.info("Removed forced_decoder_ids from model config.")
+
+        return model, processor, device, torch_dtype
+    except Exception as e:
+        logging.error(f"Failed to load and optimize model '{model_id}': {e}")
+        sys.exit(1)
 
 def model_generate_with_timeout(model, inputs, generate_kwargs, timeout):
     """

@@ -21,14 +21,17 @@ def submit_diarization_job(api_token, audio_url, num_speakers=None):
             time.sleep(retry_after)
             return submit_diarization_job(api_token, audio_url, num_speakers)
         else:
-            logging.error(f"Diarization submission failed: {response.status_code} {response.text}")
-            sys.exit(1)
+            error_msg = f"Diarization submission failed: {response.status_code} {response.text}"
+            logging.error(error_msg)
+            raise Exception(error_msg)
     except requests.exceptions.Timeout:
-        logging.error("Diarization submission timed out.")
-        sys.exit(1)
+        error_msg = "Diarization submission timed out."
+        logging.error(error_msg)
+        raise Exception(error_msg)
     except Exception as e:
-        logging.error(f"Diarization submission error: {e}")
-        sys.exit(1)
+        error_msg = f"Diarization submission error: {e}"
+        logging.error(error_msg)
+        raise
 
 def get_job_status(api_token, job_id):
     headers = {'Authorization': f'Bearer {api_token}'}
@@ -42,14 +45,17 @@ def get_job_status(api_token, job_id):
             time.sleep(retry_after)
             return get_job_status(api_token, job_id)
         else:
-            logging.error(f"Failed to get job status: {response.status_code} {response.text}")
-            sys.exit(1)
+            error_msg = f"Failed to get job status: {response.status_code} {response.text}"
+            logging.error(error_msg)
+            raise Exception(error_msg)
     except requests.exceptions.Timeout:
-        logging.error("Getting job status timed out.")
-        sys.exit(1)
+        error_msg = "Getting job status timed out."
+        logging.error(error_msg)
+        raise Exception(error_msg)
     except Exception as e:
-        logging.error(f"Error getting job status: {e}")
-        sys.exit(1)
+        error_msg = f"Error getting job status: {e}"
+        logging.error(error_msg)
+        raise
 
 def wait_for_diarization(api_token, job_id, audio_url, check_interval=5, max_retries=3, timeout=DIARIZATION_TIMEOUT):
     start_time = time.time()
@@ -57,30 +63,34 @@ def wait_for_diarization(api_token, job_id, audio_url, check_interval=5, max_ret
     print("Waiting for speaker recognition to complete...")
 
     while True:
-        job_info = get_job_status(api_token, job_id)
-        status = job_info['status']
-        elapsed = int(time.time() - start_time)
+        try:
+            job_info = get_job_status(api_token, job_id)
+            status = job_info['status']
+            elapsed = int(time.time() - start_time)
 
-        if status == 'succeeded':
-            logging.info(f"Diarization succeeded in {elapsed} seconds.")
-            print("\nSpeaker recognition complete.")
-            return job_info
-        elif status in ['failed', 'cancelled']:
-            if status == 'cancelled':
-                retries += 1
-                logging.warning(f"Diarization job cancelled. Retry {retries}/{max_retries}.")
-                if retries > max_retries:
-                    logging.error("Max retries reached. Aborting.")
-                    raise Exception("Diarization job cancelled multiple times.")
-                job_id = submit_diarization_job(api_token, audio_url)
-                continue
-            logging.error(f"Diarization failed after {elapsed} seconds.")
-            raise Exception("Diarization job failed.")
-        else:
-            logging.info(f"Diarization status: {status}. Elapsed time: {elapsed}s")
-            print(f"\rPerforming speaker recognition... {elapsed}s elapsed.", end='', flush=True)
-            time.sleep(check_interval)
+            if status == 'succeeded':
+                logging.info(f"Diarization succeeded in {elapsed} seconds.")
+                print("\nSpeaker recognition complete.")
+                return job_info
+            elif status in ['failed', 'cancelled']:
+                if status == 'cancelled':
+                    retries += 1
+                    logging.warning(f"Diarization job cancelled. Retry {retries}/{max_retries}.")
+                    if retries > max_retries:
+                        logging.error("Max retries reached. Aborting.")
+                        raise Exception("Diarization job cancelled multiple times.")
+                    job_id = submit_diarization_job(api_token, audio_url, num_speakers=None)  # Assuming no change in num_speakers
+                    continue
+                logging.error(f"Diarization failed after {elapsed} seconds.")
+                raise Exception("Diarization job failed.")
+            else:
+                logging.info(f"Diarization status: {status}. Elapsed time: {elapsed}s")
+                print(f"\rPerforming speaker recognition... {elapsed}s elapsed.", end='', flush=True)
+                time.sleep(check_interval)
 
-        if elapsed > timeout:
-            logging.error("Diarization job timed out.")
-            raise Exception("Diarization job timed out.")
+            if elapsed > timeout:
+                logging.error("Diarization job timed out.")
+                raise Exception("Diarization job timed out.")
+        except Exception as e:
+            logging.error(f"Diarization process encountered an error: {e}")
+            raise
