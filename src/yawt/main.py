@@ -238,12 +238,12 @@ def main():
 
         logging.info("Script started.")
 
-        # Initialize environment variables
-        initialize_environment()
+        # Initialize and load configuration
+        config = load_and_prepare_config(args.config)  # Load the specified config
 
-        # Retrieve API tokens
-        pyannote_token = args.pyannote_token or os.getenv("PYANNOTE_TOKEN")
-        openai_key = args.openai_key or os.getenv("OPENAI_KEY")
+        # **Retrieve API tokens with correct precedence**
+        pyannote_token = args.pyannote_token or config.get('pyannote_token') or os.getenv("PYANNOTE_TOKEN")
+        openai_key = args.openai_key or config.get('openai_key') or os.getenv("OPENAI_KEY")
 
         # Check if API tokens are set
         check_api_tokens(pyannote_token, openai_key)

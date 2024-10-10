@@ -5,11 +5,11 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# **Load environment variables from .env file**
 load_dotenv()
 
-# Define the path to the config file
-CONFIG_FILE = Path(__file__).parent / "config.yaml"
+# Define the path to the default config file
+CONFIG_FILE = Path(__file__).parent / "../../config/default_config.yaml"
 
 def load_config(config_path=CONFIG_FILE):
     if not config_path.exists():
