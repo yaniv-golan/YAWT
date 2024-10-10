@@ -8,3 +8,4 @@ requests>=2.31.0
 requests-toolbelt>=0.10.1
 accelerate>=0.26.0
 srt>=3.0.0 
+pyyaml>=6.0
