@@ -1,9 +1,9 @@
 import logging
-import os
+import os 
 import sys
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
-from config import LOG_DIRECTORY
+from config import LOG_DIRECTORY, MAX_LOG_SIZE, BACKUP_COUNT
 
 def setup_logging(debug=False, verbose=False):
     os.makedirs(LOG_DIRECTORY, exist_ok=True)
@@ -18,7 +18,7 @@ def setup_logging(debug=False, verbose=False):
         log_level = logging.WARNING
 
     handlers = [
-        RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5),
+        RotatingFileHandler(log_file, maxBytes=MAX_LOG_SIZE, backupCount=BACKUP_COUNT),
         logging.StreamHandler(sys.stdout)
     ] if debug or verbose else [
         logging.StreamHandler(sys.stdout)

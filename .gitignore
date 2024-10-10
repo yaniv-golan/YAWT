@@ -32,7 +32,7 @@ test-trans-ctx_transcription-v2.txt
 test-trans-ctx_transcription.srt
 
 # Configuration files
-config.py
+config.yaml
 
 # Logs directory
 logs/
