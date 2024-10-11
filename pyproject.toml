@@ -3,7 +3,12 @@ name = "yawt"
 version = "0.1.0"
 description = "YAWT (Yet Another Whisper-based Transcriber) is a transcription tool that leverages OpenAI's Whisper model to deliver accurate and efficient audio-to-text conversion."
 authors = ["Yaniv Golan <yaniv@golan.name>"]
+license = "MIT"
+readme = "README.md"
 packages = [{ include = "yawt", from = "src" }]
+include = [
+    { path = "config/default_config.yaml", format = ["sdist", "wheel"] }
+]
 
 [tool.poetry.dependencies]
 python = "^3.11"
