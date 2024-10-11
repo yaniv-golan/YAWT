@@ -6,9 +6,9 @@ authors = ["Yaniv Golan <yaniv@golan.name>"]
 packages = [{ include = "yawt", from = "src" }]
 
 [tool.poetry.dependencies]
-python = "^3.11.4"
+python = "^3.11"
 torch = "^2.1.0"
-transformers = ">=4.35.0"
+transformers = "^4.45.2"
 tqdm = ">=4.66.0"
 python-dotenv = ">=1.0.0"
 ffmpeg-python = ">=0.2.0"

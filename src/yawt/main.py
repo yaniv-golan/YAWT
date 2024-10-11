@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 
+import sys
+import os
+
+# Add the parent directory to PYTHONPATH
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import argparse
 import logging
 import os
-import sys
 import json
 import time
 import numpy as np
@@ -19,33 +24,91 @@ from datetime import datetime, timedelta
 import srt
 from logging.handlers import RotatingFileHandler
 import concurrent.futures
+from datetime import datetime
 
-# Constants
+# Constants and Configuration
 from config import (
-    MAX_TARGET_POSITIONS,
-    BUFFER_TOKENS,
-    MAX_CHUNK_DURATION,
-    GENERATE_TIMEOUT,
-    COST_PER_MINUTE,
-    PYANNOTE_COST_PER_HOUR,
-    DEFAULT_MODEL_ID,
-    SUPPORTED_UPLOAD_SERVICES,
-    DOWNLOAD_TIMEOUT,
-    UPLOAD_TIMEOUT,
-    DIARIZATION_TIMEOUT,
-    JOB_STATUS_TIMEOUT,
+    load_and_prepare_config
 )
 
 # Setup environment variable
 os.environ['PYDEVD_DISABLE_FILE_VALIDATION'] = '1'
 
 # Logging setup
-from logging_setup import setup_logging
+from yawt.logging_setup import setup_logging
 
-from audio_handler import load_audio, upload_file, download_audio
-from diarization import submit_diarization_job, wait_for_diarization
-from transcription import transcribe_single_segment, retry_transcriptions, load_and_optimize_model
+from audio_handler import load_audio, upload_file, download_audio, handle_audio_input
+from diarization import submit_diarization_job, wait_for_diarization, perform_diarization
+from yawt.transcription import (
+    transcribe_single_segment,
+    retry_transcriptions,
+    load_and_optimize_model,
+    transcribe_segments  # Added transcribe_segments to the import
+)
 from output_writer import write_transcriptions
+
+def check_api_tokens(pyannote_token, openai_key):
+    """
+    Checks if the required API tokens are set.
+
+    Args:
+        pyannote_token (str): Pyannote API token.
+        openai_key (str): OpenAI API key.
+
+    Raises:
+        SystemExit: If any of the tokens are not set.
+    """
+    if not pyannote_token:
+        logging.error("PYANNOTE_TOKEN is not set. Please provide it via the config file or environment variable.")
+        sys.exit(1)
+    
+    if not openai_key:
+        logging.error("OPENAI_KEY is not set. Please provide it via the config file or environment variable.")
+        sys.exit(1)
+
+def integrate_context_prompt(args, processor, device, torch_dtype):
+    """
+    Integrates context prompt into transcription by tokenizing and preparing decoder input ids.
+    
+    Args:
+        args: Parsed command-line arguments.
+        processor: The processor for the transcription model.
+        device: The device to run the model on.
+        torch_dtype: The data type for torch tensors.
+    
+    Returns:
+        torch.Tensor or None: The decoder input ids if context prompt is provided, else None.
+    """
+    if args.context_prompt:
+        logging.info("Integrating context prompt into transcription.")
+        # Tokenize the context prompt
+        prompt_encoded = processor.tokenizer(args.context_prompt, return_tensors="pt", add_special_tokens=False)
+        decoder_input_ids = prompt_encoded['input_ids'].to(device).to(torch_dtype)
+        return decoder_input_ids
+    return None
+
+def map_speakers(diarization_segments):
+    """
+    Maps speaker labels to unique speaker IDs.
+    
+    Args:
+        diarization_segments (list): List of diarization segments with 'speaker' key.
+    
+    Returns:
+        list: List of speaker dictionaries with 'id' and 'name'.
+    """
+    speaker_mapping = {}
+    speakers = []
+    speaker_counter = 1
+    for segment in diarization_segments:
+        speaker = segment['speaker']
+        if speaker not in speaker_mapping:
+            speaker_id = f"Speaker{speaker_counter}"
+            speaker_mapping[speaker] = {'id': speaker_id, 'name': f'Speaker {speaker_counter}'}
+            speakers.append({'id': speaker_id, 'name': f'Speaker {speaker_counter}'})
+            speaker_counter += 1
+        segment['speaker_id'] = speaker_mapping[speaker]['id']
+    return speakers
 
 def validate_output_formats(formats):
     valid = {'text', 'json', 'srt'}
@@ -60,11 +123,11 @@ def validate_output_formats(formats):
         raise argparse.ArgumentTypeError(f"Invalid formats: {', '.join(invalid)}. Choose from text, json, srt.")
     return formats
 
-def calculate_cost(duration_seconds):
+def calculate_cost(duration_seconds, cost_per_minute, pyannote_cost_per_hour):
     minutes = duration_seconds / 60
     hours = duration_seconds / 3600
-    whisper = minutes * COST_PER_MINUTE
-    diarization = hours * PYANNOTE_COST_PER_HOUR
+    whisper = minutes * cost_per_minute
+    diarization = hours * pyannote_cost_per_hour
     total = whisper + diarization
     return whisper, diarization, total
 
@@ -73,6 +136,10 @@ def parse_arguments():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--audio-url', type=str, help='Publicly accessible URL of the audio file to transcribe.')
     group.add_argument('--input-file', type=str, help='Path to the local audio file to transcribe.')
+
+    # Added the --config argument
+    parser.add_argument('--config', type=str, help='Path to the configuration file.')
+
     parser.add_argument('--context-prompt', type=str, help='Context prompt to guide transcription.')
     parser.add_argument('--language', type=str, nargs='+', help='Specify the language(s) of the audio.')
     parser.add_argument('--num-speakers', type=int, help='Specify the number of speakers if known.')
@@ -81,200 +148,95 @@ def parse_arguments():
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
     parser.add_argument("--pyannote-token", help="Pyannote API token (overrides environment variable)")
     parser.add_argument("--openai-key", help="OpenAI API key (overrides environment variable)")
-    parser.add_argument("--model", default=DEFAULT_MODEL_ID,
-                        help=f"OpenAI transcription model to use (default: {DEFAULT_MODEL_ID})")
+    parser.add_argument("--model", default="openai/whisper-large-v3",  # Set a default model
+                        help="OpenAI transcription model to use")
     parser.add_argument('--output-format', type=str, nargs='+',
                         default=['text'], help='Desired output format(s): text, json, srt.')
     return parser.parse_args()
 
-def initialize_environment():
-    load_dotenv()
-
-def check_api_tokens(pyannote_token, openai_key):
-    if not pyannote_token:
-        logging.error("PYANNOTE_TOKEN not set.")
-        sys.exit(1)
-    if not openai_key:
-        logging.error("OPENAI_KEY not set.")
-        sys.exit(1)
-
-def load_and_prepare_model(model_id):
-    model, processor, device, torch_dtype = load_and_optimize_model(model_id)
-    return model, processor, device, torch_dtype
-
-def integrate_context_prompt(args, processor, device, torch_dtype):
-    if args.context_prompt:
-        logging.info("Integrating context prompt into transcription.")
-        # Tokenize the context prompt
-        prompt_encoded = processor.tokenizer(args.context_prompt, return_tensors="pt", add_special_tokens=False)
-        decoder_input_ids = prompt_encoded['input_ids'].to(device).to(torch_dtype)
-        return decoder_input_ids
-    return None
-
-def handle_audio_input(args):
-    if args.audio_url:
-        audio_url = args.audio_url
-        logging.info(f"Using audio URL: {audio_url}")
-        local_audio_path = download_audio(audio_url)
-    else:
-        input_file = args.input_file
-        if not os.path.isfile(input_file):
-            logging.error(f"Input file {input_file} does not exist.")
-            sys.exit(1)
-        logging.info(f"Using local file: {input_file}")
-        try:
-            audio_url = upload_file(input_file, service='0x0.st')
-            logging.info(f"Uploaded to '0x0.st': {audio_url}")
-            local_audio_path = input_file
-        except Exception as e:
-            logging.error(f"File upload failed: {e}")
-            sys.exit(1)
-    return audio_url, local_audio_path
-
-def perform_diarization(pyannote_token, audio_url, num_speakers):
-    try:
-        logging.info("Submitting diarization job.")
-        job_id = submit_diarization_job(pyannote_token, audio_url, num_speakers)
-        job_info = wait_for_diarization(pyannote_token, job_id, audio_url)
-        diarization_segments = job_info.get('output', {}).get('diarization', [])
-        if not diarization_segments:
-            raise Exception("No diarization results found.")
-        logging.info(f"Diarization completed: {len(diarization_segments)} segments found.")
-        return diarization_segments
-    except Exception as e:
-        logging.error(f"Diarization error: {e}")
-        raise
-
-def map_speakers(diarization_segments):
-    speaker_mapping = {}
-    speakers = []
-    speaker_counter = 1
-    for segment in diarization_segments:
-        speaker = segment['speaker']
-        if speaker not in speaker_mapping:
-            speaker_id = f"Speaker{speaker_counter}"
-            speaker_mapping[speaker] = {'id': speaker_id, 'name': f'Speaker {speaker_counter}'}
-            speakers.append({'id': speaker_id, 'name': f'Speaker {speaker_counter}'})
-            speaker_counter += 1
-        segment['speaker_id'] = speaker_mapping[speaker]['id']
-    return speakers
-
-def transcribe_segments(args, diarization_segments, audio_array, model, processor, device, torch_dtype):
-    transcription_segments = []
-    failed_segments = []
-
-    with tqdm(total=len(diarization_segments), desc="Transcribing") as pbar:
-        for idx, seg in enumerate(diarization_segments, 1):
-            start, end = seg['start'], seg['end']
-            logging.info(f"Transcribing segment {idx}: {start}-{end}s")
-            chunk_transcriptions = []
-            for chunk_start in range(int(start), int(end), MAX_CHUNK_DURATION):
-                chunk_end = min(chunk_start + MAX_CHUNK_DURATION, end)
-                chunk = audio_array[int(chunk_start*16000):int(chunk_end*16000)]
-                inputs = processor(chunk, sampling_rate=16000, return_tensors="pt")
-                inputs = {k: v.to(device).to(torch_dtype) for k, v in inputs.items()}
-                inputs['attention_mask'] = torch.ones_like(inputs['input_features'])
-
-                generate_kwargs = {
-                    "task": "transcribe",
-                    "return_timestamps": True,
-                    "max_new_tokens": MAX_TARGET_POSITIONS - BUFFER_TOKENS
-                }
-                if args.language and len(args.language) == 1:
-                    generate_kwargs["language"] = args.language[0]
-                else:
-                    generate_kwargs["language"] = None
-
-                # Add decoder_input_ids if available
-                if 'decoder_input_ids' in generate_kwargs and generate_kwargs['decoder_input_ids'] is not None:
-                    generate_kwargs["decoder_input_ids"] = generate_kwargs["decoder_input_ids"]
-
-                # Transcribe the segment
-                transcription = transcribe_single_segment(
-                    model, processor, inputs, generate_kwargs, idx, chunk_start, chunk_end, device, torch_dtype
-                )
-                if transcription == 'fallback':
-                    # Fallback to CPU using the same helper function
-                    try:
-                        model_cpu = model.to('cpu')
-                        inputs_cpu = {k: v.to('cpu') for k, v in inputs.items()}
-                        transcription = transcribe_single_segment(
-                            model_cpu, processor, inputs_cpu, generate_kwargs, idx, chunk_start, chunk_end, device, torch_dtype
-                        )
-                        if transcription:
-                            chunk_transcriptions.append(transcription.strip())
-                        else:
-                            # If transcription fails again, log it
-                            failed_segments.append({'segment': idx, 'reason': 'CPU fallback failed'})
-                    except Exception as e:
-                        logging.error(f"CPU fallback failed for segment {idx}-{chunk_start}-{chunk_end}s: {e}")
-                        failed_segments.append({'segment': idx, 'reason': f'CPU fallback exception: {e}'})
-                        continue
-                    finally:
-                        model.to(device)  # Move the model back to the original device
-                elif transcription:
-                    chunk_transcriptions.append(transcription)
-                else:
-                    # Track failed segment
-                    failed_segments.append({'segment': idx, 'reason': 'Transcription failed due to Timeout or Runtime Error'})
-            full_transcription = ' '.join(chunk_transcriptions)
-            transcription_segments.append({
-                'start': start,
-                'end': end,
-                'speaker_id': seg['speaker_id'],
-                'text': full_transcription
-            })
-            pbar.update(1)
-    logging.info("Transcription completed.")
-    return transcription_segments, failed_segments
-
 def main():
     try:
+        # Load and validate configurations
+        config = load_and_prepare_config()
+        
         # Parse command-line arguments
         args = parse_arguments()
-
-        # Setup logging based on arguments
-        setup_logging(debug=args.debug, verbose=args.verbose)
-
+        
+        # Setup logging based on configuration
+        setup_logging(
+            log_directory=config['logging']['log_directory'],
+            max_log_size=config['logging']['max_log_size'],
+            backup_count=config['logging']['backup_count'],
+            debug=config['transcription'].get('debug', False),
+            verbose=config['transcription'].get('verbose', False)
+        )
+        
         logging.info("Script started.")
-
-        # Initialize and load configuration
-        config = load_and_prepare_config(args.config)  # Load the specified config
-
+    
         # **Retrieve API tokens with correct precedence**
         pyannote_token = args.pyannote_token or config.get('pyannote_token') or os.getenv("PYANNOTE_TOKEN")
         openai_key = args.openai_key or config.get('openai_key') or os.getenv("OPENAI_KEY")
-
+    
+        # **Add logging to verify where tokens are loaded from**
+        if args.pyannote_token:
+            logging.debug("Pyannote token loaded from command-line arguments.")
+        elif config.get('pyannote_token'):
+            logging.debug("Pyannote token loaded from config file.")
+        elif os.getenv("PYANNOTE_TOKEN"):
+            logging.debug("Pyannote token loaded from environment variable.")
+        else:
+            logging.error("Pyannote token not found in args, config, or environment variables.")
+    
+        if args.openai_key:
+            logging.debug("OpenAI key loaded from command-line arguments.")
+        elif config.get('openai_key'):
+            logging.debug("OpenAI key loaded from config file.")
+        elif os.getenv("OPENAI_KEY"):
+            logging.debug("OpenAI key loaded from environment variable.")
+        else:
+            logging.error("OpenAI key not found in args, config, or environment variables.")
+    
         # Check if API tokens are set
         check_api_tokens(pyannote_token, openai_key)
-
+    
         # Validate output formats
         try:
             args.output_format = validate_output_formats(args.output_format)
         except argparse.ArgumentTypeError as e:
             parser = argparse.ArgumentParser(description="Transcribe audio with speaker diarization")
             parser.error(str(e))
-
+    
         print(f"Output formats: {args.output_format}")  # Debugging line
-
+    
         # Load and optimize the model
-        model, processor, device, torch_dtype = load_and_prepare_model(args.model)
-
+        model_id = args.model or config['model']['default_model_id']  # Use config default if args.model is None
+        model, processor, device, torch_dtype = load_and_optimize_model(model_id)
+    
         # Integrate context prompt if provided
         decoder_input_ids = integrate_context_prompt(args, processor, device, torch_dtype)
-
-        # Handle audio input (download or upload)
-        audio_url, local_audio_path = handle_audio_input(args)
-
+    
+        # Handle audio input
+        audio_url, local_audio_path = handle_audio_input(
+            args=args,
+            supported_upload_services=config['supported_upload_services'],
+            upload_timeout=config['timeouts']['upload_timeout']
+        )
+    
         # Determine base name for output files
         base_name = os.path.splitext(os.path.basename(audio_url if args.audio_url else args.input_file))[0]
         logging.info(f"Base name for outputs: {base_name}")
-
+    
         # Submit and wait for diarization job
         try:
-            diarization_segments = perform_diarization(pyannote_token, audio_url, args.num_speakers)
+            diarization_segments = perform_diarization(
+                pyannote_token, 
+                audio_url, 
+                args.num_speakers, 
+                config['timeouts']['diarization_timeout'],
+                config['timeouts']['job_status_timeout']  # Pass job_status_timeout
+            )
         except Exception as e:
-            logging.error(f"Diarization error: {e}")
+            logging.exception(f"Diarization error: {e}")  # Capture stack trace
             if args.audio_url and os.path.exists(local_audio_path):
                 try:
                     os.remove(local_audio_path)
@@ -282,27 +244,42 @@ def main():
                 except Exception as cleanup_error:
                     logging.warning(f"Cleanup failed: {cleanup_error}")
             sys.exit(1)
-
+    
+        logging.debug(f"Diarization Segments Before Mapping: {diarization_segments}")  
+    
         # Map speakers to identifiers
         speakers = map_speakers(diarization_segments)
-
+    
         # Load audio data
         audio_array = load_audio(local_audio_path)
         total_duration = len(audio_array) / 16000  # Assuming 16kHz sampling rate
-        whisper_cost, diarization_cost, total_cost = calculate_cost(total_duration)
-
+        whisper_cost, diarization_cost, total_cost = calculate_cost(
+            total_duration, config['api_costs']['whisper']['cost_per_minute'], config['api_costs']['pyannote']['cost_per_hour']
+        )
+    
         # Handle dry-run option
         if args.dry_run:
             print(f"Estimated cost: ${total_cost:.4f} USD")
             sys.exit(0)
-
+    
         logging.info(f"Processing cost: Whisper=${whisper_cost:.4f}, Diarization=${diarization_cost:.4f}, Total=${total_cost:.4f}")
-
+    
         # Transcribe all segments
         transcription_segments, failed_segments = transcribe_segments(
-            args, diarization_segments, audio_array, model, processor, device, torch_dtype
+            args,
+            diarization_segments,
+            audio_array,
+            model,
+            processor,
+            device,
+            torch_dtype,
+            generate_timeout=config['transcription']['generate_timeout'],
+            max_target_positions=config['transcription']['max_target_positions'],
+            buffer_tokens=config['transcription']['buffer_tokens'],
+            transcription_timeout=config['transcription']['generate_timeout'],  # Assuming transcription_timeout is same as generate_timeout
+            generate_kwargs={"decoder_input_ids": decoder_input_ids} if decoder_input_ids is not None else {}  # {{ edit: pass generate_kwargs }}
         )
-
+    
         # Retry failed segments
         if failed_segments:
             logging.info("Retrying failed segments...")
@@ -312,30 +289,36 @@ def main():
                 audio_array,
                 diarization_segments,
                 failed_segments,
-                {"decoder_input_ids": decoder_input_ids} if decoder_input_ids else {},
+                {"decoder_input_ids": decoder_input_ids} if decoder_input_ids is not None else {},  # {{ edit: pass generate_kwargs }}
                 device,
                 torch_dtype,
                 base_name,
-                transcription_segments
+                transcription_segments,
+                generate_timeout=config['transcription']['generate_timeout'],
+                max_target_positions=config['transcription']['max_target_positions'],
+                buffer_tokens=config['transcription']['buffer_tokens'],
+                transcription_timeout=config['transcription']['generate_timeout'],  # Assuming same as generate_timeout
             )
-
+    
         # Write transcriptions to specified formats AFTER handling retries
         write_transcriptions(args.output_format, base_name, transcription_segments, speakers)
-
+    
         # Report any remaining failed segments after retries
         if failed_segments:
             logging.warning("Some segments failed to transcribe after all retry attempts:")
             for failure in failed_segments:
                 logging.warning(f"Segment {failure['segment']}: {failure['reason']}")
             print("Some segments failed to transcribe after retries. Check logs for details.")
-
+    
         # Recalculate costs if retries were attempted
-        whisper_cost, diarization_cost, total_cost = calculate_cost(total_duration)
+        whisper_cost, diarization_cost, total_cost = calculate_cost(
+            total_duration, config['api_costs']['whisper']['cost_per_minute'], config['api_costs']['pyannote']['cost_per_hour']
+        )
         print(f"\nTotal Duration: {total_duration:.2f}s")
         print(f"Transcription Cost: ${whisper_cost:.4f} USD")
         print(f"Diarization Cost: ${diarization_cost:.4f} USD")
         print(f"Total Estimated Cost: ${total_cost:.4f} USD\n")
-
+    
         # Cleanup temporary audio file if using audio URL
         if args.audio_url:
             try:
@@ -343,7 +326,7 @@ def main():
                 logging.info(f"Deleted temporary file: {local_audio_path}")
             except Exception as e:
                 logging.warning(f"Failed to delete temporary file: {e}")
-
+    
         logging.info("Process completed successfully.")
     except Exception as e:
         logging.error(f"An unexpected error occurred in main: {e}")

@@ -25,6 +25,7 @@ dist/
 
 # Jupyter Notebook
 .ipynb_checkpoints/
+
 test-trans-ctx_transcription.txt
 testdata/test-trans-ctx.m4a
 test-trans-ctx_transcript.json
