@@ -27,7 +27,7 @@ import concurrent.futures
 from datetime import datetime
 
 # Constants and Configuration
-from config import (
+from yawt.config import (
     load_and_prepare_config
 )
 
@@ -37,15 +37,15 @@ os.environ['PYDEVD_DISABLE_FILE_VALIDATION'] = '1'
 # Logging setup
 from yawt.logging_setup import setup_logging
 
-from audio_handler import load_audio, upload_file, download_audio, handle_audio_input
-from diarization import submit_diarization_job, wait_for_diarization, perform_diarization
+from yawt.audio_handler import load_audio, upload_file, download_audio, handle_audio_input
+from yawt.diarization import submit_diarization_job, wait_for_diarization, perform_diarization
 from yawt.transcription import (
     transcribe_single_segment,
     retry_transcriptions,
     load_and_optimize_model,
     transcribe_segments  # Added transcribe_segments to the import
 )
-from output_writer import write_transcriptions
+from yawt.output_writer import write_transcriptions
 
 def check_api_tokens(pyannote_token, openai_key):
     """
