@@ -23,7 +23,7 @@ def test_submit_diarization_job_rate_limit(mock_post, mocker):
         mock_post.side_effect = [mock_response, MagicMock(status_code=200, json=lambda: {"jobId": "job123"})]
         job_id = submit_diarization_job("fake_token", "https://example.com/audio.wav")
         assert job_id == "job123"
-        assert mock_sleep.called_once_with(1)
+        mock_sleep.assert_called_once_with(1)
 
 @patch('yawt.diarization.requests.post')
 def test_submit_diarization_job_failure(mock_post):
@@ -57,7 +57,7 @@ def test_get_job_status_rate_limit(mock_get, mocker):
         mock_get.side_effect = [mock_response, MagicMock(status_code=200, json=lambda: {"status": "succeeded"})]
         job_info = get_job_status("fake_token", "job123")
         assert job_info['status'] == "succeeded"
-        assert mock_sleep.called_once_with(1)
+        mock_sleep.assert_called_once_with(1)
 
 @patch('yawt.diarization.requests.get')
 def test_get_job_status_failure(mock_get):

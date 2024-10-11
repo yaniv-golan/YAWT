@@ -5,8 +5,9 @@ from yawt.transcription import (
     model_generate_with_timeout,
     transcribe_single_segment,
     retry_transcriptions,
-    TimeoutException
+    TimeoutException  # Ensure TimeoutException is imported
 )
+import concurrent.futures  # {{ edit: Import concurrent.futures }}
 
 @pytest.fixture
 def mock_model():

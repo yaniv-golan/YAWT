@@ -22,7 +22,17 @@ supported_upload_services:
 
 # Timeout Settings (in seconds)
 timeouts:
-  download_timeout: 120
-  upload_timeout: 120
+  download_timeout: 60  # {{ edit: Add download_timeout with a default value of 60 seconds }}
+  upload_timeout: 120    # {{ edit: Ensure upload_timeout is defined }}
   diarization_timeout: 3600
   job_status_timeout: 60
+
+# Transcription Settings
+transcription:
+  generate_timeout: 300  # Timeout for transcription in seconds
+  max_target_positions: 448
+  buffer_tokens: 10  # Reduced from 445 to 10
+
+# API Tokens
+# pyannote_token: "your_pyannote_api_token_here"
+# openai_key: "your_openai_api_key_here"

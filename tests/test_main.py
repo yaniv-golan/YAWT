@@ -79,7 +79,12 @@ def test_main_success(
 
     with patch('yawt.main.write_transcriptions') as mock_write:
         main()
-        mock_write.assert_called_once()
+        mock_write.assert_called_once_with(
+            ['text'],
+            'test_audio',
+            [{'start': 0, 'end': 30, 'speaker_id': 'Speaker1', 'text': 'Mocked transcription.'}],
+            [{'id': 'Speaker1', 'name': 'Speaker 1'}]
+        )
 
 def test_main_diarization_failure(mocker):
     with patch('yawt.main.parse_arguments') as mock_parse:
@@ -107,3 +112,9 @@ def test_main_diarization_failure(mocker):
         with patch('yawt.main.sys.exit') as mock_exit:
             main()
             mock_exit.assert_called_once_with(1)
+
+@patch('yawt.main.time.sleep')
+def test_submit_diarization_job_rate_limit(mock_sleep, mocker):
+    ...
+    mock_sleep.assert_called_once_with(1)
+    ...
