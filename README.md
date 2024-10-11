@@ -1,6 +1,6 @@
 # YAWT (Yet Another Whisper-based Transcriber)
 
-YAWT is a powerful and flexible audio transcription tool that leverages OpenAI's Whisper model to provide accurate and efficient audio-to-text conversion. With built-in speaker diarization using PyAnnote and support for multiple upload services, YAWT is designed to cater to diverse transcription needs with ease.
+YAWT is an audio transcription tool that leverages OpenAI's Whisper model to provide accurate and efficient audio-to-text conversion. With built-in speaker diarization using PyAnnote and support for multiple upload services, YAWT is designed to cater to diverse transcription needs with ease.
 
 ## Table of Contents
 
@@ -26,7 +26,7 @@ YAWT is a powerful and flexible audio transcription tool that leverages OpenAI's
 
 ### Prerequisites
 
-- **Python 3.11.4** or higher
+- **Python 3.11** or higher
 - **Poetry** for dependency management (optional but recommended)
 
 ### Steps
@@ -34,7 +34,7 @@ YAWT is a powerful and flexible audio transcription tool that leverages OpenAI's
 1. **Clone the Repository:**
 
    ```bash
-   git clone https://github.com/yourusername/yawt.git
+   git clone https://github.com/yaniv-golan/YAWT/yawt.git
    cd yawt
    ```
 
@@ -279,6 +279,3 @@ Please ensure your code adheres to the existing style and passes all tests.
 
 This project is licensed under the [MIT License](LICENSE).
 
----
-
-**Note:** Ensure that you replace placeholder URLs, paths, and other details with actual values relevant to your project.
