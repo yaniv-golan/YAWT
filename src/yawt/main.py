@@ -156,12 +156,12 @@ def parse_arguments():
 
 def main():
     try:
-        # Load and validate configurations
-        config = load_and_prepare_config()
-        
         # Parse command-line arguments
         args = parse_arguments()
-        
+
+        # Load and validate configurations
+        config = load_and_prepare_config(args.config)
+                
         # Setup logging based on configuration
         setup_logging(
             log_directory=config['logging']['log_directory'],
