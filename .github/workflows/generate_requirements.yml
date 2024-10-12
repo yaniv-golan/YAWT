@@ -10,12 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v3  # Update to @v4 if available
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.8'
 
       - name: Install Poetry
         run: |
@@ -26,7 +26,7 @@ jobs:
         run: poetry export -f requirements.txt --output requirements.txt --without-hashes
 
       - name: Upload requirements.txt as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: requirements
           path: requirements.txt
