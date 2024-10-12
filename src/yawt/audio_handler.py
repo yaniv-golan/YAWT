@@ -7,9 +7,8 @@ import requests
 from requests_toolbelt.multipart.encoder import MultipartEncoder, MultipartEncoderMonitor
 from tqdm import tqdm
 import logging
-from yawt.config import DOWNLOAD_TIMEOUT  # {{ edit: Import DOWNLOAD_TIMEOUT from config }}
 
-def load_audio(input_file, sampling_rate=16000):
+def load_audio(input_file, sampling_rate=16000, download_timeout=None):
     try:
         out, _ = (
             ffmpeg.input(input_file, threads=0)
@@ -116,10 +115,10 @@ def upload_file(file_path, service='0x0.st', secret=None, expires=None, supporte
         logging.error(f"Unexpected error during upload: {e}")
         raise
 
-def download_audio(audio_url, destination_dir='/desired/path'):
+def download_audio(audio_url, destination_dir='/desired/path', download_timeout=None):
     try:
         logging.info(f"Downloading audio from {audio_url}...")
-        with requests.get(audio_url, stream=True, timeout=DOWNLOAD_TIMEOUT) as r:
+        with requests.get(audio_url, stream=True, timeout=download_timeout) as r:
             if r.status_code == 200:
                 file_path = os.path.join(destination_dir, 'audio.wav')
                 with open(file_path, 'wb') as f:
