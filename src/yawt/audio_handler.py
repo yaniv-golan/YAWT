@@ -9,19 +9,38 @@ from tqdm import tqdm
 import logging
 
 def load_audio(input_file, sampling_rate=16000, download_timeout=None):
+    """
+    Loads an audio file and converts it into a NumPy array.
+    
+    Args:
+        input_file (str): Path to the input audio file.
+        sampling_rate (int, optional): Desired sampling rate for the audio. Defaults to 16000 Hz.
+        download_timeout (int, optional): Timeout for downloading the audio file. Defaults to None.
+    
+    Returns:
+        np.ndarray: Array of audio samples.
+    
+    Raises:
+        ffmpeg._run.Error: If FFmpeg encounters an error during processing.
+        Exception: For any unexpected errors.
+    """
     try:
+        # Use FFmpeg to convert audio to a raw floating-point format
         out, _ = (
             ffmpeg.input(input_file, threads=0)
             .output('pipe:', format='f32le', acodec='pcm_f32le', ar=sampling_rate, ac=1)
             .run(capture_stdout=True, capture_stderr=True)
         )
+        # Convert the raw bytes to a NumPy array of floats
         audio = np.frombuffer(out, np.float32)
         logging.info(f"Audio loaded from {input_file}.")
         return audio
-    except ffmpeg._run.Error as e:  # Change this line
+    except ffmpeg._run.Error as e:
+        # Log FFmpeg-specific errors
         logging.error(f"FFmpeg error: {e.stderr.decode() if e.stderr else str(e)}")
         raise
     except Exception as e:
+        # Log any other unexpected errors
         logging.error(f"Unexpected error in load_audio: {str(e)}")
         raise
 
@@ -31,11 +50,11 @@ def upload_file(file_path, service='0x0.st', secret=None, expires=None, supporte
     
     Args:
         file_path (str): Path to the file to upload.
-        service (str): The upload service to use.
+        service (str): The upload service to use. Defaults to '0x0.st'.
         secret (str, optional): Secret for the upload service.
         expires (str, optional): Expiration time for the upload.
-        supported_upload_services (set): Set of supported upload services.
-        upload_timeout (int): Timeout for the upload in seconds.
+        supported_upload_services (set, optional): Set of supported upload services. Defaults to {'0x0.st', 'file.io'}.
+        upload_timeout (int, optional): Timeout for the upload in seconds. Defaults to None.
     
     Returns:
         str: URL of the uploaded file.
@@ -64,6 +83,7 @@ def upload_file(file_path, service='0x0.st', secret=None, expires=None, supporte
                     encoder.fields['expires'] = expires
 
                 def progress_callback(monitor):
+                    # Update the progress bar based on bytes uploaded
                     pbar.update(monitor.bytes_read - pbar.n)
 
                 with tqdm(total=encoder.len, unit='B', unit_scale=True, desc="Uploading") as pbar:
@@ -72,7 +92,7 @@ def upload_file(file_path, service='0x0.st', secret=None, expires=None, supporte
                         url,
                         data=monitor,
                         headers={'Content-Type': monitor.content_type, 'User-Agent': headers['User-Agent']},
-                        timeout=upload_timeout if upload_timeout else 120  # {{ edit: Set default upload_timeout if None }}
+                        timeout=upload_timeout if upload_timeout else 120  # Set default upload_timeout if None
                     )
 
             if response.status_code == 200:
@@ -98,7 +118,7 @@ def upload_file(file_path, service='0x0.st', secret=None, expires=None, supporte
                     url,
                     data=encoder,
                     headers={'Content-Type': encoder.content_type},
-                    timeout=upload_timeout if upload_timeout else 120  # {{ edit: Set default upload_timeout if None }}
+                    timeout=upload_timeout if upload_timeout else 120  # Set default upload_timeout if None
                 )
 
             if response.status_code == 200 and response.json().get('success'):
@@ -109,13 +129,29 @@ def upload_file(file_path, service='0x0.st', secret=None, expires=None, supporte
                 logging.error(f"Upload failed: {response.status_code} {response.text}")
                 raise Exception(f"Upload failed: {response.status_code} {response.text}")
     except requests.exceptions.RequestException as e:
+        # Log network-related errors during upload
         logging.error(f"Request error during upload: {e}")
         raise
     except Exception as e:
+        # Log any other unexpected errors during upload
         logging.error(f"Unexpected error during upload: {e}")
         raise
 
 def download_audio(audio_url, destination_dir='/desired/path', download_timeout=None):
+    """
+    Downloads an audio file from the given URL to the specified directory.
+    
+    Args:
+        audio_url (str): URL of the audio file to download.
+        destination_dir (str, optional): Directory to save the downloaded audio. Defaults to '/desired/path'.
+        download_timeout (int, optional): Timeout for the download in seconds. Defaults to None.
+    
+    Returns:
+        str: Path to the downloaded audio file.
+    
+    Raises:
+        Exception: If the download fails or the file is empty.
+    """
     try:
         logging.info(f"Downloading audio from {audio_url}...")
         with requests.get(audio_url, stream=True, timeout=download_timeout) as r:
@@ -126,7 +162,7 @@ def download_audio(audio_url, destination_dir='/desired/path', download_timeout=
                         if chunk:
                             f.write(chunk)
                 
-                # {{ edit: Check if the downloaded file is empty and raise an exception }}
+                # Check if the downloaded file is empty and raise an exception if true
                 if os.path.getsize(file_path) == 0:
                     logging.error(f"Downloaded file is empty: {file_path}")
                     raise Exception("Downloaded audio file is empty.")
@@ -137,6 +173,7 @@ def download_audio(audio_url, destination_dir='/desired/path', download_timeout=
                 logging.error(f"Failed to download audio. Status code: {r.status_code}")
                 raise Exception(f"Failed to download audio: {r.status_code}")
     except Exception as e:
+        # Log any errors that occur during the download process
         logging.error(f"Error during audio download: {e}")
         raise
 
@@ -145,18 +182,22 @@ def handle_audio_input(args, supported_upload_services, upload_timeout):
     Handles the input audio by either downloading it from a URL or uploading a local file.
     
     Args:
-        args: Parsed command-line arguments.
+        args (argparse.Namespace): Parsed command-line arguments.
         supported_upload_services (set): Set of supported upload services.
         upload_timeout (int): Timeout for the upload in seconds.
     
     Returns:
-        tuple: (audio_url, local_audio_path)
+        tuple: A tuple containing the audio URL and the local path to the audio file.
+    
+    Raises:
+        SystemExit: If downloading or uploading fails.
     """
     if args.audio_url:
         audio_url = args.audio_url
         logging.info(f"Using audio URL: {audio_url}")
         try:
-            local_audio_path = download_audio(audio_url, destination_dir=os.path.dirname(args.input_file))  # {{ edit: Set destination_dir appropriately }}
+            # Download the audio from the provided URL
+            local_audio_path = download_audio(audio_url, destination_dir=os.path.dirname(args.input_file))  # Set destination_dir appropriately
             logging.info(f"Downloaded audio to: {local_audio_path}")
         except Exception as e:
             logging.error(f"Failed to download audio from URL: {e}")
@@ -168,6 +209,7 @@ def handle_audio_input(args, supported_upload_services, upload_timeout):
             sys.exit(1)
         logging.info(f"Using local file: {input_file}")
         try:
+            # Upload the local audio file to the specified service
             audio_url = upload_file(
                 input_file, 
                 service='0x0.st', 
