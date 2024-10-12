@@ -1,0 +1,59 @@
+# Example Configuration File for YAWT Application
+# =================================================
+# This file serves as a template for configuring the YAWT application.
+# Users should copy this file to create their own configuration file
+# (e.g., user_config.yaml) and modify the settings as required.
+
+# API Costs Configuration
+# ------------------------
+# Define the cost per unit for each API service.
+api_costs:
+  whisper_cost_per_minute: 0.006  # USD per minute for Whisper
+  pyannote_cost_per_hour: 0.18    # USD per hour for diarization
+
+# Logging Configuration
+# ---------------------
+# Configure how the application handles logging.
+logging:
+  log_directory: "logs"           # Directory where logs will be stored
+  max_log_size: 10485760          # Maximum size of a log file in bytes (10 MB)
+  backup_count: 5                 # Number of backup log files to keep
+  debug: false                    # Enable debug logging for the entire script
+  verbose: false                  # Enable verbose output for the entire script
+
+# Model Configuration
+# -------------------
+# Specify which transcription model to use.
+model:
+  default_model_id: "openai/whisper-large-v3"  # Identifier for the default transcription model
+
+# Supported Upload Services
+# -------------------------
+# List of services that can be used to upload audio files.
+supported_upload_services:
+  - "0x0.st"
+  - "file.io"
+
+# Timeout Settings (in seconds)
+# -----------------------------
+# Define various timeout durations for different operations.
+timeouts:
+  download_timeout: 60           # Timeout for downloading audio files
+  upload_timeout: 120            # Timeout for uploading audio files
+  diarization_timeout: 3600      # Timeout for the diarization process
+  job_status_timeout: 60         # Timeout for checking job status
+
+# Transcription Settings
+# ----------------------
+# Configure settings related to the transcription process.
+transcription:
+  generate_timeout: 300          # Timeout for transcription generation in seconds
+  max_target_positions: 448      # Maximum target positions for the model
+  buffer_tokens: 10              # Number of buffer tokens to maintain
+
+# API Tokens
+# ----------
+# Provide your API tokens here. These can also be set via environment variables.
+# It's recommended to keep sensitive information like API keys secure and not commit them to version control.
+pyannote_token: "your_pyannote_api_token_here"  # Pyannote API token (can also be set via PYANNOTE_TOKEN environment variable)
+openai_key: "your_openai_api_key_here"          # OpenAI API key (can also be set via OPENAI_KEY environment variable)

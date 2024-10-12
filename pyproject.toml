@@ -6,9 +6,6 @@ authors = ["Yaniv Golan <yaniv@golan.name>"]
 license = "MIT"
 readme = "README.md"
 packages = [{ include = "yawt", from = "src" }]
-include = [
-    { path = "config/default_config.yaml", format = ["sdist", "wheel"] }
-]
 
 [tool.poetry.dependencies]
 python = "^3.11"
