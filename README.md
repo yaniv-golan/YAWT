@@ -1,6 +1,6 @@
 # YAWT (Yet Another Whisper-based Transcriber)
 
-YAWT is an audio transcription tool that leverages OpenAI's Whisper model to provide accurate and efficient audio-to-text conversion. With built-in speaker diarization using PyAnnote and support for multiple upload services, YAWT is designed to cater to diverse transcription needs with ease.
+YAWT is an audio transcription tool that utilizes OpenAI's Whisper model for efficient audio-to-text conversion. It incorporates speaker diarization using PyAnnote and supports multiple upload services, enabling flexible transcription workflows.
 
 ## Table of Contents
 
@@ -14,28 +14,27 @@ YAWT is an audio transcription tool that leverages OpenAI's Whisper model to pro
 
 ## Features
 
-- **Accurate Transcription:** Utilizes OpenAI's Whisper model for high-quality audio-to-text conversion.
-- **Speaker Diarization:** Differentiates between multiple speakers in an audio file using PyAnnote.
-- **Multiple Output Formats:** Supports exporting transcriptions in `text`, `json`, and `srt` formats.
-- **Upload Services Integration:** Seamlessly uploads audio files to services like `0x0.st` and `file.io`.
-- **Configurable Timeouts and Costs:** Allows customization of timeout settings and provides cost estimations based on usage.
-- **Logging:** Comprehensive logging with configurable log levels and log rotation to monitor and debug processes.
-- **Dry-Run Mode:** Estimate processing costs without executing the actual transcription.
+- **Transcription:** Uses OpenAI's Whisper model for audio-to-text conversion.
+- **Speaker Diarization:** Identifies and separates individual speakers within an audio file using PyAnnote.
+- **Output Formats:** Exports transcriptions in `text`, `json`, and `srt` formats.
+- **Upload Services:** Uploads audio files to services like `0x0.st` and `file.io`.
+- **Configurable Timeouts and Costs:** Users can customize timeout settings and view cost estimations based on usage.
+- **Logging:** Includes logging with configurable levels and log rotation for monitoring and debugging.
+- **Dry-Run Mode:** Allows cost estimation without executing the transcription process.
 
 ## Installation
 
 ### Prerequisites
 
 - **Python 3.11** or higher
-- **Poetry** for dependency management (optional but recommended)
+- **Poetry** for dependency management
 
 ### Steps
 
-1. **Clone the Repository:**
+1. **Install YAWT using Poetry:**
 
    ```bash
-   git clone https://github.com/yaniv-golan/YAWT/yawt.git
-   cd yawt
+   poetry add git+https://github.com/yaniv-golan/YAWT.git@latest
    ```
 
 2. **Set Up a Virtual Environment:**
@@ -78,55 +77,19 @@ YAWT is an audio transcription tool that leverages OpenAI's Whisper model to pro
      OPENAI_KEY=your_openai_api_key_here
      ```
 
-   - **Configure `config/default_config.yaml`:**
+   - **Optional: Create a Custom Configuration File:**
 
-     Adjust the configurations as needed, such as API costs, logging settings, and supported upload services.
+     Instead of using the default configuration, you can create a custom configuration file and specify its path using command-line arguments when running YAWT.
 
-     ```yaml
-     # API Costs
-     api_costs:
-       whisper:
-         cost_per_minute: 0.006  # USD per minute for Whisper
-       pyannote:
-         cost_per_hour: 0.18     # USD per hour for diarization
-
-     # Logging Configuration
-     logging:
-       log_directory: "logs"
-       max_log_size: 10485760      # 10 MB in bytes
-       backup_count: 5
-
-     # Model Configuration
-     model:
-       default_model_id: "openai/whisper-large-v3"
-
-     # Supported Services
-     supported_upload_services:
-       - "0x0.st"
-       - "file.io"
-
-     # Timeout Settings (in seconds)
-     timeouts:
-       download_timeout: 60  # Default download timeout
-       upload_timeout: 120    # Default upload timeout
-       diarization_timeout: 3600
-       job_status_timeout: 60
-
-     # Transcription Settings
-     transcription:
-       generate_timeout: 300  # Timeout for transcription in seconds
-       max_target_positions: 448
-       buffer_tokens: 10  # Reduced from 445 to 10
-
-     # API Tokens
-     # These can also be set via environment variables in the .env file
-     # pyannote_token: "your_pyannote_api_token_here"
-     # openai_key: "your_openai_api_key_here"
+     ```bash
+     poetry run yawt --config path/to/your_config.yaml
      ```
 
 ## Configuration
 
-YAWT's behavior can be customized via the `config/default_config.yaml` file and environment variables. Here's a breakdown of the key configurations:
+YAWT's behavior can be customized via the `config.py` module and environment variables. Additionally, you have the option to create a custom configuration file and specify its path using command-line arguments when running the application.
+
+Here's a breakdown of the key configurations:
 
 - **API Costs:**
   - `whisper.cost_per_minute`: Cost per minute for using the Whisper model.
@@ -167,26 +130,34 @@ YAWT can be used via the command line to transcribe audio files either from a lo
 1. **Transcribe a Local Audio File:**
 
    ```bash
-   python src/yawt/main.py --input-file path/to/audio.wav
+   poetry run yawt --input-file path/to/audio.wav
    ```
 
 2. **Transcribe an Audio File from a URL:**
 
    ```bash
-   python src/yawt/main.py --audio-url https://example.com/audio.wav
+   poetry run yawt --audio-url https://example.com/audio.wav
    ```
 
 3. **Estimate Cost Without Transcription (Dry Run):**
 
    ```bash
-   python src/yawt/main.py --input-file path/to/audio.wav --dry-run
+   poetry run yawt --input-file path/to/audio.wav --dry-run
    ```
 
 4. **Specify Output Formats:**
 
    ```bash
-   python src/yawt/main.py --input-file path/to/audio.wav --output-format text json srt
+   poetry run yawt --input-file path/to/audio.wav --output-format text json srt
    ```
+
+### Sample Command with Multiple Command-Line Arguments
+
+To run YAWT with a custom configuration file, enable verbose logging, specify the language, and set the number of speakers:
+
+```bash
+poetry run yawt --input-file path/to/audio.wav --config config/custom_config.yaml --verbose --language English --num-speakers 2
+```
 
 ### Available Options
 
@@ -206,46 +177,7 @@ YAWT can be used via the command line to transcribe audio files either from a lo
 
 ## Testing
 
-YAWT includes a comprehensive test suite to ensure reliability and correctness. Tests are written using `pytest` and utilize `unittest.mock` for mocking external dependencies.
-
-### Running Tests
-
-1. **Ensure All Dependencies Are Installed:**
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Run All Tests:**
-
-   ```bash
-   pytest
-   ```
-
-3. **Run a Specific Test:**
-
-   ```bash
-   pytest tests/test_audio_handler.py::test_load_audio_ffmpeg_error
-   ```
-
-### Test Coverage
-
-The test suite covers various components, including:
-
-- **Audio Handling (`tests/test_audio_handler.py`):**  
-  Tests for loading audio, handling FFmpeg errors, uploading files to supported services, and downloading audio files.
-
-- **Diarization (`tests/test_diarization.py`):**  
-  Tests for submitting diarization jobs, handling rate limits, and checking job statuses.
-
-- **Main Application (`tests/test_main.py`):**  
-  Tests for the main transcription flow, including successful transcriptions and handling failures.
-
-- **Logging Setup (`tests/test_logging_setup.py`):**  
-  Tests for configuring logging based on different settings.
-
-- **Transcription (`tests/test_transcription.py`):**  
-  Tests for transcription generation, handling timeouts, and retry mechanisms.
+YAWT includes a set of tests to ensure basic functionality. Tests are written using `pytest` and utilize `unittest.mock` for mocking external dependencies. The test suite is not yet comprehensive and has not been integrated into the build process.
 
 ## Contributing
 
@@ -278,4 +210,3 @@ Please ensure your code adheres to the existing style and passes all tests.
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
-
