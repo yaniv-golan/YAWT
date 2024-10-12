@@ -44,11 +44,12 @@ def setup_logging(log_directory, max_log_size, backup_count, debug=False, verbos
     if _setup_done:
         return  # Prevent multiple setups
 
+    # Ensure the log directory exists
     os.makedirs(log_directory, exist_ok=True)
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = os.path.join(log_directory, f"transcription_log_{current_time}.log")
 
-    # Determine the logging level
+    # Determine the logging level based on debug and verbose flags
     if debug:
         log_level = logging.DEBUG
     elif verbose:
@@ -56,68 +57,69 @@ def setup_logging(log_directory, max_log_size, backup_count, debug=False, verbos
     else:
         log_level = logging.WARNING
 
-    # Get the root logger
+    # Get the root logger and set its level to DEBUG to capture all messages
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)  # Capture all messages, filtering occurs on handlers
+    root_logger.setLevel(logging.DEBUG)  # Capture all messages; filtering occurs on handlers
 
-    # Remove all existing handlers to prevent duplicates
+    # Remove all existing handlers to prevent duplicate logs
     if root_logger.hasHandlers():
         root_logger.handlers.clear()
 
-    # Create file handler
+    # Create a rotating file handler to log all messages
     file_handler = RotatingFileHandler(log_file, maxBytes=max_log_size, backupCount=backup_count)
-    file_handler.setLevel(logging.DEBUG)  # All logs go to file
+    file_handler.setLevel(logging.DEBUG)  # Log all levels to the file
     file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
     file_handler.setFormatter(file_formatter)
     root_logger.addHandler(file_handler)
 
-    # Create console handler for stdout
+    # Create a console handler for standard output (stdout)
     console_stdout_handler = logging.StreamHandler(sys.stdout)
-    console_stdout_handler.setLevel(log_level)
+    console_stdout_handler.setLevel(log_level)  # Set console logging level based on flags
     console_stdout_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     console_stdout_handler.setFormatter(console_stdout_formatter)
-    # Add filter to exclude transformers logs
+    # Add filter to exclude transformers logs from stdout
     console_stdout_handler.addFilter(ExcludeTransformersFilter())
     root_logger.addHandler(console_stdout_handler)
 
-    # Create console handler for stderr
+    # Create a console handler for standard error (stderr)
     console_stderr_handler = logging.StreamHandler(sys.stderr)
-    console_stderr_handler.setLevel(log_level)
+    console_stderr_handler.setLevel(log_level)  # Set console logging level based on flags
     console_stderr_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     console_stderr_handler.setFormatter(console_stderr_formatter)
-    # Add filter to exclude transformers logs
+    # Add filter to exclude transformers logs from stderr
     console_stderr_handler.addFilter(ExcludeTransformersFilter())
     root_logger.addHandler(console_stderr_handler)
 
-    # Capture warnings via the logging system
+    # Capture warnings issued by the warnings module into the logging system
     logging.captureWarnings(True)
 
-    # Suppress transformers warnings via the warnings module
+    # Suppress specific warnings from the transformers library via the warnings module
     warnings.filterwarnings("ignore", message=".*transformers.*", category=UserWarning)
     warnings.filterwarnings("ignore", message=".*transformers.*", category=DeprecationWarning)
     warnings.filterwarnings("ignore", message=".*transformers.*", category=FutureWarning)
 
-    # Log that logging has been set up
+    # Log that console and file handlers have been added to the root logger
     logging.debug("Console and file handlers added to root logger.")
 
-    # Configure Transformers' logger
+    # Configure the Transformers library's logger to suppress lower-level logs
     transformers_logger = logging.getLogger("transformers")
-    transformers_logger.setLevel(logging.ERROR)  # Suppress warnings, show errors and above
-    transformers_logger.propagate = False        # Don't propagate to root logger
+    transformers_logger.setLevel(logging.ERROR)  # Only show errors and above
+    transformers_logger.propagate = False        # Prevent propagation to the root logger
 
-    # Add file handler to transformers logger to ensure logs are written to the file
+    # Add the file handler to the transformers logger to ensure logs are written to the file
     transformers_logger.addHandler(file_handler)
 
-    # Set Transformers logging to ERROR level using the Transformers logging utility
+    # Set the Transformers library's verbosity to ERROR using its logging utility
     transformers_logging.set_verbosity_error()
 
+    # Log that the Transformers logger has been configured
     logging.debug("Transformers logger configured to ERROR level and propagation disabled.")
 
-    # Create a dedicated logger for filter diagnostics
+    # Create a dedicated logger for filter diagnostics to trace excluded logs
     filter_logger = logging.getLogger("FilterDiagnostics")
     filter_logger.setLevel(logging.DEBUG)
-    # Add handler to filter_logger (same as file_handler)
+    # Add the same file handler to the filter diagnostics logger
     filter_logger.addHandler(file_handler)
 
-    # Set the setup flag
+    # Set the setup flag to prevent re-running the setup
     _setup_done = True
