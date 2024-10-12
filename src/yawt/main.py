@@ -1,5 +1,26 @@
 #!/usr/bin/env python3
 
+# 1. Import warnings and configure them before any other imports
+import warnings
+warnings.filterwarnings("ignore", message=".*transformers.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*transformers.*", category=DeprecationWarning)
+warnings.filterwarnings("ignore", message=".*transformers.*", category=FutureWarning)
+
+# 2. Now import the setup_logging function
+from yawt.logging_setup import setup_logging
+
+# 3. Initialize logging
+setup_logging(
+    log_directory="logs",
+    max_log_size=10 * 1024 * 1024,  # 10 MB
+    backup_count=5,
+    debug=False,
+    verbose=False
+)
+
+# 4. Import transformers and other modules after logging is configured
+import transformers
+
 import sys
 import os
 
@@ -7,8 +28,6 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse
-import logging
-import os
 import json
 import time
 import numpy as np
@@ -24,7 +43,6 @@ from datetime import datetime, timedelta
 import srt
 from logging.handlers import RotatingFileHandler
 import concurrent.futures
-from datetime import datetime
 
 # Constants and Configuration
 from yawt.config import (
@@ -35,9 +53,6 @@ from yawt.config import (
 # Setup environment variable
 os.environ['PYDEVD_DISABLE_FILE_VALIDATION'] = '1'
 
-# Logging setup
-from yawt.logging_setup import setup_logging
-
 from yawt.audio_handler import load_audio, upload_file, download_audio, handle_audio_input
 from yawt.diarization import submit_diarization_job, wait_for_diarization, perform_diarization
 from yawt.transcription import (
@@ -47,6 +62,10 @@ from yawt.transcription import (
     transcribe_segments  # Added transcribe_segments to the import
 )
 from yawt.output_writer import write_transcriptions
+
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 def check_api_tokens(pyannote_token, openai_key):
     """
@@ -278,7 +297,7 @@ def main():
             max_target_positions=config.transcription.max_target_positions,
             buffer_tokens=config.transcription.buffer_tokens,
             transcription_timeout=config.transcription.generate_timeout,  # Assuming transcription_timeout is same as generate_timeout
-            generate_kwargs={"decoder_input_ids": decoder_input_ids} if decoder_input_ids is not None else {}  # {{ edit: pass generate_kwargs }}
+            generate_kwargs={"decoder_input_ids": decoder_input_ids} if decoder_input_ids is not None else {}
         )
     
         # Retry failed segments
@@ -290,7 +309,7 @@ def main():
                 audio_array,
                 diarization_segments,
                 failed_segments,
-                {"decoder_input_ids": decoder_input_ids} if decoder_input_ids is not None else {},  # {{ edit: pass generate_kwargs }}
+                {"decoder_input_ids": decoder_input_ids} if decoder_input_ids is not None else {},
                 device,
                 torch_dtype,
                 base_name,
@@ -298,7 +317,7 @@ def main():
                 generate_timeout=config.transcription.generate_timeout,
                 max_target_positions=config.transcription.max_target_positions,
                 buffer_tokens=config.transcription.buffer_tokens,
-                transcription_timeout=config.transcription.generate_timeout,  # Assuming same as generate_timeout
+                transcription_timeout=config.transcription.generate_timeout,
             )
     
         # Write transcriptions to specified formats AFTER handling retries
