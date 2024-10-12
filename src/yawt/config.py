@@ -79,7 +79,3 @@ def load_and_prepare_config(config_path=None):
     validate_config(config)
     return config
 
-def load_default_config():
-    with importlib.resources.open_text('yawt', 'default_config.yaml') as f:
-        config = yaml.safe_load(f)
-    return config
