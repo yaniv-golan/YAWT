@@ -27,9 +27,12 @@ def setup_logging(log_directory, max_log_size, backup_count, debug=False, verbos
         log_level = logging.WARNING
 
     handlers = []
-    if debug or verbose:
-        handlers.append(RotatingFileHandler(log_file, maxBytes=max_log_size, backupCount=backup_count))
-    handlers.append(logging.StreamHandler(sys.stdout))
+    handlers.append(RotatingFileHandler(log_file, maxBytes=max_log_size, backupCount=backup_count))
+    
+    # Always add console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(log_level)
+    handlers.append(console_handler)
 
     logging.basicConfig(
         level=log_level,

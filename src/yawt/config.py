@@ -1,81 +1,93 @@
 # config.py
 
 import yaml
-import importlib.resources
-from dotenv import load_dotenv
+from dataclasses import dataclass, field
+from typing import List, Optional
 import os
 
-# Load environment variables from .env file
-load_dotenv()
+@dataclass
+class APICosts:
+    whisper_cost_per_minute: float = 0.006  # USD per minute for Whisper
+    pyannote_cost_per_hour: float = 0.18    # USD per hour for diarization
 
-def load_config(config_path=None):
+@dataclass
+class LoggingConfig:
+    log_directory: str = "logs"
+    max_log_size: int = 10485760  # 10 MB in bytes
+    backup_count: int = 5
+    debug: bool = False
+    verbose: bool = False
+
+@dataclass
+class ModelConfig:
+    default_model_id: str = "openai/whisper-large-v3"
+
+@dataclass
+class TimeoutSettings:
+    download_timeout: int = 60       # seconds
+    upload_timeout: int = 120        # seconds
+    diarization_timeout: int = 3600  # seconds
+    job_status_timeout: int = 60     # seconds
+
+@dataclass
+class TranscriptionSettings:
+    generate_timeout: int = 300        # seconds
+    max_target_positions: int = 448
+    buffer_tokens: int = 10            # Reduced from 445 to 10
+
+@dataclass
+class Config:
+    api_costs: APICosts = field(default_factory=APICosts)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
+    supported_upload_services: List[str] = field(default_factory=lambda: ["0x0.st", "file.io"])
+    timeouts: TimeoutSettings = field(default_factory=TimeoutSettings)
+    transcription: TranscriptionSettings = field(default_factory=TranscriptionSettings)
+    pyannote_token: Optional[str] = None
+    openai_key: Optional[str] = None
+
+def load_config(config_path: Optional[str] = None) -> Config:
     """
-    Loads the configuration from the specified file or the default config.
+    Loads the configuration from the default settings and overrides with a config file if provided.
 
     Args:
-        config_path (str, optional): The path to the configuration file. Defaults to None.
+        config_path (str, optional): Path to the YAML configuration file. Defaults to None.
 
     Returns:
-        dict: The configuration dictionary.
-
-    Raises:
-        FileNotFoundError: If the specified config file does not exist.
-        yaml.YAMLError: If there's an error parsing the YAML file.
+        Config: The resulting configuration object.
     """
+    config = Config()
+
     if config_path:
-        # Expand user and environment variables in the path
-        config_path = os.path.expandvars(os.path.expanduser(config_path))
-        if not os.path.isfile(config_path):
-            raise FileNotFoundError(f"Configuration file '{config_path}' not found.")
         with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
-    else:
-        # Load the default configuration from the package
-        with importlib.resources.open_text('yawt', 'default_config.yaml') as f:
-            config = yaml.safe_load(f)
+            user_config = yaml.safe_load(f)
+
+        if user_config is None:
+            user_config = {}
+
+        # Helper function to recursively update dataclass fields
+        def update_dataclass(dc, updates):
+            for key, value in updates.items():
+                if hasattr(dc, key):
+                    attr = getattr(dc, key)
+                    if isinstance(attr, (APICosts, LoggingConfig, ModelConfig, TimeoutSettings, TranscriptionSettings)):
+                        update_dataclass(attr, value)
+                    else:
+                        setattr(dc, key, value)
+                else:
+                    setattr(dc, key, value)
+
+        update_dataclass(config, user_config)
+
+    # Override with environment variables if present
+    config.pyannote_token = config.pyannote_token or os.getenv("PYANNOTE_TOKEN")
+    config.openai_key = config.openai_key or os.getenv("OPENAI_KEY")
+    
+    # Ensure global debug and verbose flags override environment variables if needed
+    config.logging.debug = config.logging.debug or os.getenv("DEBUG") == "true"
+    config.logging.verbose = config.logging.verbose or os.getenv("VERBOSE") == "true"
+
     return config
 
-def validate_config(config):
-    """
-    Validates the loaded configuration.
-
-    Args:
-        config (dict): The configuration dictionary to validate.
-
-    Raises:
-        ValueError: If any validation checks fail.
-    """
-    # Existing validations
-    if config['api_costs']['whisper']['cost_per_minute'] < 0:
-        raise ValueError("Whisper cost per minute must be non-negative.")
-    if config['api_costs']['pyannote']['cost_per_hour'] < 0:
-        raise ValueError("Pyannote cost per hour must be non-negative.")
-
-    # Validate Transcription Settings
-    transcription = config.get('transcription')
-    if transcription is None:
-        raise ValueError("Missing 'transcription' section in configuration.")
-
-    if transcription.get('max_target_positions', 0) <= 0:
-        raise ValueError("max_target_positions must be a positive integer.")
-    if transcription.get('generate_timeout', 0) <= 0:
-        raise ValueError("generate_timeout must be a positive integer.")
-    if transcription.get('buffer_tokens', 0) < 0:
-        raise ValueError("buffer_tokens must be non-negative.")
-
-    # Add more validations as needed
-
-def load_and_prepare_config(config_path=None):
-    """
-    Loads and validates the configuration from the specified file.
-
-    Args:
-        config_path (str, optional): The path to the configuration file. Defaults to None.
-
-    Returns:
-        dict: The validated configuration dictionary.
-    """
-    config = load_config(config_path)
-    validate_config(config)
-    return config
-
+# Example usage:
+# config = load_config(args.config)

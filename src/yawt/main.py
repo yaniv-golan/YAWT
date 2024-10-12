@@ -28,7 +28,8 @@ from datetime import datetime
 
 # Constants and Configuration
 from yawt.config import (
-    load_and_prepare_config
+    load_config,
+    Config
 )
 
 # Setup environment variable
@@ -160,27 +161,27 @@ def main():
         args = parse_arguments()
 
         # Load and validate configurations
-        config = load_and_prepare_config(args.config)
+        config = load_config(args.config)
                 
         # Setup logging based on configuration
         setup_logging(
-            log_directory=config['logging']['log_directory'],
-            max_log_size=config['logging']['max_log_size'],
-            backup_count=config['logging']['backup_count'],
-            debug=config['transcription'].get('debug', False),
-            verbose=config['transcription'].get('verbose', False)
+            log_directory=config.logging.log_directory,
+            max_log_size=config.logging.max_log_size,
+            backup_count=config.logging.backup_count,
+            debug=args.debug or config.logging.debug,      # Override with --debug if provided
+            verbose=args.verbose or config.logging.verbose # Override with --verbose if provided
         )
         
         logging.info("Script started.")
     
         # **Retrieve API tokens with correct precedence**
-        pyannote_token = args.pyannote_token or config.get('pyannote_token') or os.getenv("PYANNOTE_TOKEN")
-        openai_key = args.openai_key or config.get('openai_key') or os.getenv("OPENAI_KEY")
+        pyannote_token = args.pyannote_token or config.pyannote_token or os.getenv("PYANNOTE_TOKEN")
+        openai_key = args.openai_key or config.openai_key or os.getenv("OPENAI_KEY")
     
         # **Add logging to verify where tokens are loaded from**
         if args.pyannote_token:
             logging.debug("Pyannote token loaded from command-line arguments.")
-        elif config.get('pyannote_token'):
+        elif config.pyannote_token:
             logging.debug("Pyannote token loaded from config file.")
         elif os.getenv("PYANNOTE_TOKEN"):
             logging.debug("Pyannote token loaded from environment variable.")
@@ -189,7 +190,7 @@ def main():
     
         if args.openai_key:
             logging.debug("OpenAI key loaded from command-line arguments.")
-        elif config.get('openai_key'):
+        elif config.openai_key:
             logging.debug("OpenAI key loaded from config file.")
         elif os.getenv("OPENAI_KEY"):
             logging.debug("OpenAI key loaded from environment variable.")
@@ -209,7 +210,7 @@ def main():
         print(f"Output formats: {args.output_format}")  # Debugging line
     
         # Load and optimize the model
-        model_id = args.model or config['model']['default_model_id']  # Use config default if args.model is None
+        model_id = args.model or config.model.default_model_id  # Use config default if args.model is None
         model, processor, device, torch_dtype = load_and_optimize_model(model_id)
     
         # Integrate context prompt if provided
@@ -218,8 +219,8 @@ def main():
         # Handle audio input
         audio_url, local_audio_path = handle_audio_input(
             args=args,
-            supported_upload_services=config['supported_upload_services'],
-            upload_timeout=config['timeouts']['upload_timeout']
+            supported_upload_services=config.supported_upload_services,
+            upload_timeout=config.timeouts.upload_timeout
         )
     
         # Determine base name for output files
@@ -232,8 +233,8 @@ def main():
                 pyannote_token, 
                 audio_url, 
                 args.num_speakers, 
-                config['timeouts']['diarization_timeout'],
-                config['timeouts']['job_status_timeout']  # Pass job_status_timeout
+                config.timeouts.diarization_timeout,
+                config.timeouts.job_status_timeout  # Pass job_status_timeout
             )
         except Exception as e:
             logging.exception(f"Diarization error: {e}")  # Capture stack trace
@@ -254,7 +255,7 @@ def main():
         audio_array = load_audio(local_audio_path)
         total_duration = len(audio_array) / 16000  # Assuming 16kHz sampling rate
         whisper_cost, diarization_cost, total_cost = calculate_cost(
-            total_duration, config['api_costs']['whisper']['cost_per_minute'], config['api_costs']['pyannote']['cost_per_hour']
+            total_duration, config.api_costs.whisper_cost_per_minute, config.api_costs.pyannote_cost_per_hour
         )
     
         # Handle dry-run option
@@ -273,10 +274,10 @@ def main():
             processor,
             device,
             torch_dtype,
-            generate_timeout=config['transcription']['generate_timeout'],
-            max_target_positions=config['transcription']['max_target_positions'],
-            buffer_tokens=config['transcription']['buffer_tokens'],
-            transcription_timeout=config['transcription']['generate_timeout'],  # Assuming transcription_timeout is same as generate_timeout
+            generate_timeout=config.transcription.generate_timeout,
+            max_target_positions=config.transcription.max_target_positions,
+            buffer_tokens=config.transcription.buffer_tokens,
+            transcription_timeout=config.transcription.generate_timeout,  # Assuming transcription_timeout is same as generate_timeout
             generate_kwargs={"decoder_input_ids": decoder_input_ids} if decoder_input_ids is not None else {}  # {{ edit: pass generate_kwargs }}
         )
     
@@ -294,10 +295,10 @@ def main():
                 torch_dtype,
                 base_name,
                 transcription_segments,
-                generate_timeout=config['transcription']['generate_timeout'],
-                max_target_positions=config['transcription']['max_target_positions'],
-                buffer_tokens=config['transcription']['buffer_tokens'],
-                transcription_timeout=config['transcription']['generate_timeout'],  # Assuming same as generate_timeout
+                generate_timeout=config.transcription.generate_timeout,
+                max_target_positions=config.transcription.max_target_positions,
+                buffer_tokens=config.transcription.buffer_tokens,
+                transcription_timeout=config.transcription.generate_timeout,  # Assuming same as generate_timeout
             )
     
         # Write transcriptions to specified formats AFTER handling retries
@@ -312,7 +313,7 @@ def main():
     
         # Recalculate costs if retries were attempted
         whisper_cost, diarization_cost, total_cost = calculate_cost(
-            total_duration, config['api_costs']['whisper']['cost_per_minute'], config['api_costs']['pyannote']['cost_per_hour']
+            total_duration, config.api_costs.whisper_cost_per_minute, config.api_costs.pyannote_cost_per_hour
         )
         print(f"\nTotal Duration: {total_duration:.2f}s")
         print(f"Transcription Cost: ${whisper_cost:.4f} USD")
