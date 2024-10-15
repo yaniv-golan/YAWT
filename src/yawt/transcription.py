@@ -4,6 +4,7 @@ import torch
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 from tqdm import tqdm  # Import tqdm for progress bars
 from transformers import EncoderDecoderCache  # Import EncoderDecoderCache for caching mechanisms
+from yawt.config import SAMPLING_RATE  # Import the SAMPLING_RATE constant
 
 class TimeoutException(Exception):
     """
@@ -239,8 +240,8 @@ def transcribe_segments(args, diarization_segments, audio_array, model, processo
             chunk_end = int(segment['end'])
 
             # Extract the audio chunk corresponding to the current diarization segment
-            chunk = audio_array[int(chunk_start * 16000):int(chunk_end * 16000)]
-            inputs = processor(chunk, sampling_rate=16000, return_tensors="pt")  # Process the audio chunk
+            chunk = audio_array[int(chunk_start * SAMPLING_RATE):int(chunk_end * SAMPLING_RATE)]  # Replace 16000 with SAMPLING_RATE
+            inputs = processor(chunk, sampling_rate=SAMPLING_RATE, return_tensors="pt")  # Process the audio chunk
             inputs = {k: v.to(device).to(torch_dtype) for k, v in inputs.items()}  # Move inputs to the correct device and dtype
             inputs['attention_mask'] = torch.ones_like(inputs['input_features'])  # Add attention mask
 
@@ -317,8 +318,8 @@ def retry_transcriptions(model, processor, audio_array, diarization_segments, fa
             # Extract the audio chunk based on segment start and end times
             chunk_start = int(start)
             chunk_end = int(end)
-            chunk = audio_array[int(chunk_start * 16000):int(chunk_end * 16000)]
-            inputs = processor(chunk, sampling_rate=16000, return_tensors="pt")  # Process the audio chunk
+            chunk = audio_array[int(chunk_start * SAMPLING_RATE):int(chunk_end * SAMPLING_RATE)]  # Replace 16000 with SAMPLING_RATE
+            inputs = processor(chunk, sampling_rate=SAMPLING_RATE, return_tensors="pt")  # Process the audio chunk
             inputs = {k: v.to(device).to(torch_dtype) for k, v in inputs.items()}  # Move inputs to the correct device and dtype
             inputs['attention_mask'] = torch.ones_like(inputs['input_features'])  # Add attention mask
 

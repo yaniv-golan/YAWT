@@ -7,8 +7,9 @@ import requests
 from requests_toolbelt.multipart.encoder import MultipartEncoder, MultipartEncoderMonitor
 from tqdm import tqdm
 import logging
+from yawt.config import SAMPLING_RATE  # Import the SAMPLING_RATE constant
 
-def load_audio(input_file, sampling_rate=16000, download_timeout=None):
+def load_audio(input_file, sampling_rate=SAMPLING_RATE, download_timeout=None):
     """
     Loads an audio file and converts it into a NumPy array.
     
