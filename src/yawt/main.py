@@ -47,7 +47,8 @@ import concurrent.futures
 # Constants and Configuration
 from yawt.config import (
     load_config,
-    Config
+    Config,
+    SAMPLING_RATE  # Import the SAMPLING_RATE constant
 )
 
 # Setup environment variable to disable file validation in pydev debugger
@@ -309,7 +310,7 @@ def main():
     
         # Load audio data into an array for processing
         audio_array = load_audio(local_audio_path)
-        total_duration = len(audio_array) / 16000  # Assuming 16kHz sampling rate
+        total_duration = len(audio_array) / SAMPLING_RATE  # Replace 16000 with SAMPLING_RATE
         whisper_cost, diarization_cost, total_cost = calculate_cost(
             total_duration, config.api_costs.whisper_cost_per_minute, config.api_costs.pyannote_cost_per_hour
         )

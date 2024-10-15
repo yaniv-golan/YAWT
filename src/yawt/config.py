@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 import os
 
+SAMPLING_RATE = 16000
+
 @dataclass
 class APICosts:
     """
