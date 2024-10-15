@@ -322,6 +322,12 @@ def main():
     
         logging.info(f"Processing cost: Whisper=${whisper_cost:.4f}, Diarization=${diarization_cost:.4f}, Total=${total_cost:.4f}")
     
+        generate_kwargs = {}
+        if decoder_input_ids is not None:
+            generate_kwargs["decoder_input_ids"] = decoder_input_ids
+        if args.language:
+            generate_kwargs["language"] = args.language[0]  # Pass the first language specified
+        
         # Transcribe all segments of the audio
         transcription_segments, failed_segments = transcribe_segments(
             args,
@@ -335,7 +341,7 @@ def main():
             max_target_positions=config.transcription.max_target_positions,
             buffer_tokens=config.transcription.buffer_tokens,
             transcription_timeout=config.transcription.generate_timeout,  # Assuming transcription_timeout is same as generate_timeout
-            generate_kwargs={"decoder_input_ids": decoder_input_ids} if decoder_input_ids is not None else {}
+            generate_kwargs=generate_kwargs
         )
     
         # Retry transcription for any failed segments
