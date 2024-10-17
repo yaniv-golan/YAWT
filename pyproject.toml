@@ -20,6 +20,7 @@ requests-toolbelt = ">=0.10.1"
 accelerate = ">=0.26.0"
 srt = ">=3.0.0"
 pyyaml = ">=6.0"
+iso639-lang = ">=2.4.2"
 
 [tool.poetry.dev-dependencies]
 pytest = "^7.0"

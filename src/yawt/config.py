@@ -4,6 +4,7 @@ import yaml
 from dataclasses import dataclass, field
 from typing import List, Optional
 import os
+import logging
 
 SAMPLING_RATE = 16000
 
@@ -51,6 +52,8 @@ class TranscriptionSettings:
     generate_timeout: int = 300          # Timeout for transcription generation
     max_target_positions: int = 448      # Maximum number of target positions for the model
     buffer_tokens: int = 10              # Number of buffer tokens to use during transcription
+    confidence_threshold: float = 0.6    # Confidence threshold for accepting transcriptions
+    max_retries: int = 1
 
 @dataclass
 class Config:
@@ -65,6 +68,37 @@ class Config:
     transcription: TranscriptionSettings = field(default_factory=TranscriptionSettings)  # Transcription process settings
     pyannote_token: Optional[str] = None                                      # Optional Pyannote API token
     openai_key: Optional[str] = None                                           # Optional OpenAI API key
+
+def load_and_log_tokens(self, args, logger):
+    # Check Pyannote token
+    if args.pyannote_token:
+        self.pyannote_token = args.pyannote_token
+        logger.debug("Pyannote token loaded from command-line arguments.")
+    elif self.pyannote_token:
+        if os.getenv("PYANNOTE_TOKEN") == self.pyannote_token:
+            logger.debug("Pyannote token loaded from environment variable.")
+        else:
+            logger.debug("Pyannote token loaded from config file.")
+    elif os.getenv("PYANNOTE_TOKEN"):
+        self.pyannote_token = os.getenv("PYANNOTE_TOKEN")
+        logger.debug("Pyannote token loaded from environment variable.")
+    else:
+        logger.error("Pyannote token not found in args, config, or environment variables.")
+
+    # Check OpenAI key
+    if args.openai_key:
+        self.openai_key = args.openai_key
+        logger.debug("OpenAI key loaded from command-line arguments.")
+    elif self.openai_key:
+        if os.getenv("OPENAI_KEY") == self.openai_key:
+            logger.debug("OpenAI key loaded from environment variable.")
+        else:
+            logger.debug("OpenAI key loaded from config file.")
+    elif os.getenv("OPENAI_KEY"):
+        self.openai_key = os.getenv("OPENAI_KEY")
+        logger.debug("OpenAI key loaded from environment variable.")
+    else:
+        logger.error("OpenAI key not found in args, config, or environment variables.")
 
 def load_config(config_path: Optional[str] = None) -> Config:
     """
@@ -113,6 +147,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
     # Override logging debug and verbose flags with environment variables if set
     config.logging.debug = config.logging.debug or os.getenv("DEBUG") == "true"
     config.logging.verbose = config.logging.verbose or os.getenv("VERBOSE") == "true"
+
+    config.load_and_log_tokens = load_and_log_tokens.__get__(config)
 
     return config  # Return the fully loaded and configured Config object
 
