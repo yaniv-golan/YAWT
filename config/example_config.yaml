@@ -50,6 +50,7 @@ transcription:
   generate_timeout: 300          # Timeout for transcription generation in seconds
   max_target_positions: 448      # Maximum target positions for the model
   buffer_tokens: 10              # Number of buffer tokens to maintain
+  max_retries: 1                 # Maximum number of retries for failed segments
 
 # API Tokens
 # ----------
