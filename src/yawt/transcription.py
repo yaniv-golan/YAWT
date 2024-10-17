@@ -268,7 +268,7 @@ def evaluate_confidence(
     overall_confidence: float,
     language_token: Optional[str],
     threshold: float = 0.6,
-    main_language: str = 'en'  # Renamed from primary_language to main_language
+    main_language: str = 'en'
 ) -> bool:
     if overall_confidence == 0.0:
         logging.warning(f"Zero confidence detected. Confidence: {overall_confidence}")
@@ -379,75 +379,68 @@ def retry_transcriptions(
     transcription_timeout: int,
     secondary_language: Optional[str] = None,
     confidence_threshold: float = 0.6,
-    main_language: str = 'en',
-    max_retries: int = 3
+    main_language: str = 'en'
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    if secondary_language and is_valid_language_code(secondary_language):
-        lang = secondary_language.lower()[:2]  # Use ISO 639-1 (2-letter) code
-    else:
+    if not secondary_language or not is_valid_language_code(secondary_language):
         if secondary_language:
             logging.warning(f"Invalid secondary language code: {secondary_language}")
         return transcription_segments, failed_segments  # No valid secondary language to retry with
 
-    for attempt in range(1, max_retries + 1):
-        if not failed_segments:
-            break
-        logging.info(f"Starting retry attempt {attempt} for failed segments with secondary language '{lang}'.")
-        logging.info(f"Number of segments to retry: {len(failed_segments)}")
+    lang = secondary_language.lower()[:2]  # Use ISO 639-1 (2-letter) code
+    logging.info(f"Starting retry for failed segments with secondary language '{lang}'.")
+    logging.info(f"Number of segments to retry: {len(failed_segments)}")
 
-        retry_failed_segments = []
-        for failure in tqdm(failed_segments, desc=f"Retrying Segments (Attempt {attempt})", unit="segment"):
-            idx = failure['segment_index']
-            seg = diarization_segments[idx - 1]
-            start, end = seg['start'], seg['end']
-            logging.info(f"Retrying transcription for segment {idx}: {start}-{end}s")
+    retry_failed_segments = []
+    for failure in tqdm(failed_segments, desc="Retrying Segments", unit="segment"):
+        idx = failure['segment_index']
+        seg = diarization_segments[idx - 1]
+        start, end = seg['start'], seg['end']
+        logging.info(f"Retrying transcription for segment {idx}: {start}-{end}s")
 
-            try:
-                # Adjust generate_kwargs for secondary language
-                current_generate_kwargs = generate_kwargs.copy()
-                current_generate_kwargs["language"] = lang
+        try:
+            # Adjust generate_kwargs for secondary language
+            current_generate_kwargs = generate_kwargs.copy()
+            current_generate_kwargs["language"] = lang
 
-                chunk_start = int(start)
-                chunk_end = int(end)
-                chunk = audio_array[int(chunk_start * SAMPLING_RATE):int(chunk_end * SAMPLING_RATE)]
-                inputs = processor(chunk, sampling_rate=SAMPLING_RATE, return_tensors="pt")
-                inputs = {k: v.to(device).to(torch_dtype) for k, v in inputs.items()}
-                inputs['attention_mask'] = torch.ones_like(inputs['input_features'])
+            chunk_start = int(start)
+            chunk_end = int(end)
+            chunk = audio_array[int(chunk_start * SAMPLING_RATE):int(chunk_end * SAMPLING_RATE)]
+            inputs = processor(chunk, sampling_rate=SAMPLING_RATE, return_tensors="pt")
+            inputs = {k: v.to(device).to(torch_dtype) for k, v in inputs.items()}
+            inputs['attention_mask'] = torch.ones_like(inputs['input_features'])
 
-                transcription, overall_confidence, language_token = transcribe_single_segment(
-                    model=model,
-                    processor=processor,
-                    inputs=inputs,
-                    generate_kwargs=current_generate_kwargs,
-                    idx=idx,
-                    chunk_start=chunk_start,
-                    chunk_end=chunk_end,
-                    device=device,
-                    torch_dtype=torch_dtype,
-                    transcription_timeout=transcription_timeout,
-                    max_target_positions=max_target_positions,
-                    buffer_tokens=buffer_tokens,
-                    main_language=lang  # Use secondary language as main_language in retries
-                )
+            transcription, overall_confidence, language_token = transcribe_single_segment(
+                model=model,
+                processor=processor,
+                inputs=inputs,
+                generate_kwargs=current_generate_kwargs,
+                idx=idx,
+                chunk_start=chunk_start,
+                chunk_end=chunk_end,
+                device=device,
+                torch_dtype=torch_dtype,
+                transcription_timeout=transcription_timeout,
+                max_target_positions=max_target_positions,
+                buffer_tokens=buffer_tokens,
+                main_language=lang  # Use secondary language as main_language in retries
+            )
 
-                if transcription and evaluate_confidence(overall_confidence, language_token, threshold=confidence_threshold, main_language=lang):
-                    # Update the existing transcription segment
-                    for t_seg in transcription_segments:
-                        if (t_seg['speaker_id'] == seg['speaker_id'] and 
-                            t_seg['start'] == start and 
-                            t_seg['end'] == end):
-                            t_seg['text'] = transcription
-                            t_seg['confidence'] = overall_confidence
-                            t_seg['language'] = language_token
-                            break
-                else:
-                    logging.warning(f"Retry {attempt}: Failed to transcribe segment {idx} with sufficient confidence.")
-                    retry_failed_segments.append(failure)
-            except Exception as e:
-                logging.exception(f"Retry attempt {attempt} for segment {idx} failed: {e}")
+            if transcription and evaluate_confidence(overall_confidence, language_token, threshold=confidence_threshold, main_language=lang):
+                # Update the existing transcription segment
+                for t_seg in transcription_segments:
+                    if (t_seg['speaker_id'] == seg['speaker_id'] and 
+                        t_seg['start'] == start and 
+                        t_seg['end'] == end):
+                        t_seg['text'] = transcription
+                        t_seg['confidence'] = overall_confidence
+                        t_seg['language'] = language_token
+                        break
+            else:
+                logging.warning(f"Retry failed to transcribe segment {idx} with sufficient confidence.")
                 retry_failed_segments.append(failure)
+        except Exception as e:
+            logging.exception(f"Retry for segment {idx} failed: {e}")
+            retry_failed_segments.append(failure)
 
-        failed_segments = retry_failed_segments
-        logging.info(f"After retry attempt {attempt}, {len(failed_segments)} segments still failed.")
-
-    return transcription_segments, failed_segments  # Return both lists
+    logging.info(f"After retry, {len(retry_failed_segments)} segments still failed.")
+    return transcription_segments, retry_failed_segments

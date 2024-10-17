@@ -32,5 +32,4 @@ config.yaml
 
 # Logs directory
 logs/
-testdata/*
-*_transcript.json
+testdata/
