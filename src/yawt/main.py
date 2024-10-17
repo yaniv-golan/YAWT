@@ -204,10 +204,11 @@ def parse_arguments():
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
     parser.add_argument("--pyannote-token", help="Pyannote API token (overrides environment variable)")
     parser.add_argument("--openai-key", help="OpenAI API key (overrides environment variable)")
-    parser.add_argument("--model", default="openai/whisper-large-v3",  # Set a default model
+    parser.add_argument("--model", default="openai/whisper-large-v3",  
                         help="OpenAI transcription model to use")
     parser.add_argument('--output-format', type=str, nargs='+',
                         default=['text'], help='Desired output format(s): text, json, srt.')
+    parser.add_argument("-o", "--output", help="Base path for output files (without extension)")
     return parser.parse_args()
 
 def main():
@@ -261,8 +262,11 @@ def main():
             upload_timeout=config.timeouts.upload_timeout
         )
 
-        # Determine base name for output files based on the input source
-        base_name = os.path.splitext(os.path.basename(audio_url if args.audio_url else args.input_file))[0]
+        # Determine base name for output files
+        if args.output:
+            base_name = args.output
+        else:
+            base_name = os.path.splitext(os.path.basename(audio_url if args.audio_url else args.input_file))[0]
         logging.info(f"Base name for outputs: {base_name}")
 
         # Submit diarization job and wait for its completion
