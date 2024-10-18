@@ -252,7 +252,10 @@ def transcribe_single_segment(
                 assert tensor.shape[0] == 1, f"Batch size for {key} must be 1, got {tensor.shape[0]}"
 
         adjusted_generate_kwargs = generate_kwargs.copy()
-        adjusted_generate_kwargs["language"] = main_language
+        # adjusted_generate_kwargs["language"] = main_language
+
+        forced_decoder_ids = processor.get_decoder_prompt_ids(language=main_language, task="transcribe")
+        adjusted_generate_kwargs["forced_decoder_ids"] = forced_decoder_ids
 
         input_length = inputs['input_features'].shape[1]  
 
