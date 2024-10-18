@@ -133,3 +133,13 @@ def test_retry_transcriptions_failure(mock_model, mock_processor):
         )
         assert len(failed) == 1  # Still failed after retries
         assert len(transcription_segments) == 0
+
+def test_transcribe_audio_empty_input(mock_transcribe_audio_success):
+    with pytest.raises(ValueError) as exc_info:
+        transcribe_audio("")
+    assert "Audio file path cannot be empty." in str(exc_info.value)
+
+def test_transcribe_audio_invalid_format(mock_transcribe_audio_success):
+    with pytest.raises(ValueError) as exc_info:
+        transcribe_audio("path/to/invalid_audio.mp3")  # Assuming only .wav is supported
+    assert "Unsupported audio format." in str(exc_info.value)

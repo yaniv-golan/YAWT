@@ -36,6 +36,16 @@ def test_submit_diarization_job_failure(mock_post):
         submit_diarization_job("fake_token", "https://example.com/audio.wav")
     assert "Diarization submission failed" in str(exc_info.value)
 
+@patch('yawt.diarization.requests.post')
+def test_submit_diarization_job_timeout(mock_post, mocker):
+    mock_response = MagicMock()
+    mock_response.status_code = 408  # Request Timeout
+    mock_post.return_value = mock_response
+
+    with pytest.raises(Exception) as exc_info:
+        submit_diarization_job("fake_token", "https://example.com/audio.wav", num_speakers=2)
+    assert "Diarization submission timed out." in str(exc_info.value)
+
 @patch('yawt.diarization.requests.get')
 def test_get_job_status_success(mock_get):
     mock_response = MagicMock()

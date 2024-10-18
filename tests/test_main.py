@@ -1,17 +1,18 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from yawt.main import transcribe_audio, main
+from yawt.transcription import transcribe_audio  # {{ edit_1: Updated import path }}
+from yawt.main import main
 import sys
 
 @pytest.fixture
 def mock_transcribe_audio_success(mocker):
-    mock = mocker.patch('yawt.main.transcribe_audio')
+    mock = mocker.patch('yawt.transcription.transcribe_audio')  # {{ edit_2: Ensure patch path is updated }}
     mock.return_value = "This is a mocked transcription."
     return mock
 
 @pytest.fixture
 def mock_transcribe_audio_failure(mocker):
-    mock = mocker.patch('yawt.main.transcribe_audio')
+    mock = mocker.patch('yawt.transcription.transcribe_audio')  # {{ edit_3: Ensure patch path is updated }}
     mock.side_effect = FileNotFoundError("Audio file not found.")
     return mock
 
@@ -83,9 +84,9 @@ def test_main_success(
         mock_load_and_prepare_model.return_value[0],
         mock_load_and_prepare_model.return_value[1],
         "path/to/test_audio.wav",
-        [],
-        [],
-        {},
+        [],  # Empty failed_segments
+        [],  # Empty transcription_segments
+        {},  # Empty generate_kwargs
         mock_load_and_prepare_model.return_value[2],
         mock_load_and_prepare_model.return_value[3],
         "test_audio",

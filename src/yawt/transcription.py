@@ -7,8 +7,8 @@ from tqdm import tqdm
 from yawt.config import SAMPLING_RATE
 import torch.nn.functional as F
 import numpy as np
-from iso639 import Lang, iter_langs
-from iso639.exceptions import InvalidLanguageValue
+from iso639 import iter_langs
+
 
 class TimeoutException(Exception):
     """
