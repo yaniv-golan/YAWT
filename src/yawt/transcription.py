@@ -10,6 +10,7 @@ import numpy as np
 from iso639 import iter_langs, Lang
 from yawt.exceptions import ModelLoadError  # Import the custom exception
 from tenacity import retry, stop_after_attempt, wait_exponential, RetryError
+from dataclasses import dataclass
 
 # Define constants
 DEFAULT_MAX_NEW_TOKENS = 256  # Maximum number of new tokens to generate during model inference
@@ -34,7 +35,7 @@ def get_device() -> torch.device:
     else:
         return torch.device("cpu")
 
-def load_and_optimize_model(model_id):
+def load_and_optimize_model(model_id: str) -> Tuple[AutoModelForSpeechSeq2Seq, AutoProcessor, torch.device, torch.dtype]:
     """
     Loads and optimizes the speech-to-text model.
 
@@ -80,9 +81,9 @@ def load_and_optimize_model(model_id):
             logging.exception(f"Model optimization failed: {e}")  # Capture stack trace for debugging
 
         # Remove forced_decoder_ids from model configuration if present to avoid unintended behavior
-        if hasattr(model.config, 'forced_decoder_ids'):
-            model.config.forced_decoder_ids = None
-            logging.info("Removed forced_decoder_ids from model config.")
+#        if hasattr(model.config, 'forced_decoder_ids'):
+#            model.config.forced_decoder_ids = None
+#            logging.info("Removed forced_decoder_ids from model config.")
 
         return model, processor, device, torch_dtype
     except FileNotFoundError as fnf_error:
@@ -170,7 +171,6 @@ def aggregate_confidence(token_confidences: List[float]) -> float:
     overall_confidence = sum(token_confidences) / len(token_confidences)
     return overall_confidence
 
-
 # to be replaced by native call to iso639.is_valid_language_token if and when https://github.com/LBeaudoux/iso639/pull/25 is approved
 
 # Create a set of valid language codes
@@ -206,22 +206,41 @@ def extract_language_token(generated_ids: torch.Tensor, tokenizer: Any) -> Optio
     
     return None
 
+@dataclass
+class ModelResources:
+    model: AutoModelForSpeechSeq2Seq
+    processor: AutoProcessor
+    device: torch.device
+    torch_dtype: torch.dtype
+    generate_kwargs: Dict[str, Any]
+
+@dataclass
+class TranscriptionConfig:
+    transcription_timeout: int
+    max_target_positions: int
+    buffer_tokens: int
+    confidence_threshold: float
+
 def transcribe_single_segment(
-    model: AutoModelForSpeechSeq2Seq,
-    processor: AutoProcessor,
-    inputs: Dict[str, torch.Tensor],
-    generate_kwargs: Dict[str, Any],
     idx: int,
     chunk_start: int,
     chunk_end: int,
-    device: torch.device,
-    torch_dtype: torch.dtype,
-    transcription_timeout: int,
-    max_target_positions: int,  # Maximum number of tokens the model can generate
-    buffer_tokens: int,  # Additional token buffer to prevent potential overflows
-    main_language: Optional[str] = None
+    inputs: Dict[str, torch.Tensor],
+    model_resources: ModelResources,
+    config: TranscriptionConfig,
+    main_language: str  # Now mandatory
 ) -> Tuple[Optional[str], float, Optional[str]]:
     try:
+        model = model_resources.model
+        processor = model_resources.processor
+        device = model_resources.device
+        torch_dtype = model_resources.torch_dtype
+        generate_kwargs = model_resources.generate_kwargs.copy()
+        transcription_timeout = config.transcription_timeout
+        max_target_positions = config.max_target_positions
+        buffer_tokens = config.buffer_tokens
+
+        
         # Assert batch size is 1
         assert inputs['input_features'].shape[0] == 1, f"Batch size must be 1, got {inputs['input_features'].shape[0]}"
         # Ensures that each transcription is processed individually to maintain consistency and prevent unexpected behavior
@@ -233,26 +252,28 @@ def transcribe_single_segment(
                 assert tensor.shape[0] == 1, f"Batch size for {key} must be 1, got {tensor.shape[0]}"
 
         adjusted_generate_kwargs = generate_kwargs.copy()
-        if main_language:
-            adjusted_generate_kwargs["language"] = main_language
+        adjusted_generate_kwargs["language"] = main_language
 
-        input_length = inputs['input_features'].shape[1]  # Use shape[1] if sequence length is in this dimension
+        input_length = inputs['input_features'].shape[1]  
+
         # Updated max_length retrieval
         if hasattr(model.config, 'max_length'):
             max_length = model.config.max_length
         elif hasattr(model.config, 'decoder') and hasattr(model.config.decoder, 'max_length'):
-            max_length = model.config.decoder.max_length  # Prevent AttributeError by ensuring 'decoder' exists
+            max_length = model.config.decoder.max_length
         else:
             max_length = max_target_positions
-        prompt_length = adjusted_generate_kwargs.get('decoder_input_ids', torch.tensor([], device=device, dtype=torch_dtype)).shape[-1]  # Moved tensor to device and set dtype
+
+        prompt_length = adjusted_generate_kwargs.get('decoder_input_ids', torch.tensor([], device=device, dtype=torch_dtype)).shape[-1]
         
         # Calculate the remaining capacity for new tokens
-        # max_length includes input tokens, prompt tokens, buffer tokens, generated tokens, and an additional token as a safety margin
         remaining_length = max_length - input_length - prompt_length - buffer_tokens - 1
         # Set max_new_tokens to the minimum of DEFAULT_MAX_NEW_TOKENS and the remaining capacity
         max_new_tokens = min(DEFAULT_MAX_NEW_TOKENS, remaining_length)
         # Ensure max_new_tokens is at least 1
         max_new_tokens = max(max_new_tokens, 1)
+
+        logging.debug(f"Segment {idx}: input_length: {input_length}, prompt_length: {prompt_length}, remaining_length: {remaining_length}, max_new_tokens: {max_new_tokens}")
 
         adjusted_generate_kwargs["max_new_tokens"] = min(
             adjusted_generate_kwargs.get("max_new_tokens", max_new_tokens),
@@ -262,7 +283,7 @@ def transcribe_single_segment(
         logging.debug(f"Segment {idx}: Input features shape: {inputs['input_features'].shape}")
         logging.debug(f"Segment {idx}: Generate kwargs: {adjusted_generate_kwargs}")
 
-        with torch.no_grad():  # Added torch.no_grad() to disable gradient computation during inference
+        with torch.no_grad():  # Disable gradient computation during inference
             outputs = model_generate_with_timeout(
                 model=model,
                 inputs=inputs,
@@ -283,7 +304,7 @@ def transcribe_single_segment(
             transcription = processor.batch_decode(outputs.sequences, skip_special_tokens=True)[0].strip()
             token_confidences = compute_per_token_confidence(outputs)
             overall_confidence = aggregate_confidence(token_confidences)
-            language_token = extract_language_token(outputs.sequences, processor.tokenizer)  # Passed device
+            language_token = extract_language_token(outputs.sequences, processor.tokenizer)
         else:
             logging.error(f"Segment {idx}: Unexpected output format")
             return None, 0.0, None
@@ -329,24 +350,22 @@ def evaluate_confidence(
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def transcribe_with_retry(
-    model, processor, inputs, generate_kwargs, idx, chunk_start, chunk_end,
-    device, torch_dtype, transcription_timeout, max_target_positions,
-    buffer_tokens, main_language
+    idx: int,
+    chunk_start: int,
+    chunk_end: int,
+    inputs: Dict[str, torch.Tensor],
+    model_resources: ModelResources,
+    config: TranscriptionConfig,
+    main_language: str  # Now mandatory
 ):
     try:
         return transcribe_single_segment(
-            model=model,
-            processor=processor,
-            inputs=inputs,
-            generate_kwargs=generate_kwargs,
             idx=idx,
             chunk_start=chunk_start,
             chunk_end=chunk_end,
-            device=device,
-            torch_dtype=torch_dtype,
-            transcription_timeout=transcription_timeout,
-            max_target_positions=max_target_positions,
-            buffer_tokens=buffer_tokens,
+            inputs=inputs,
+            model_resources=model_resources,
+            config=config,
             main_language=main_language
         )
     except TimeoutException:
@@ -356,17 +375,16 @@ def transcribe_with_retry(
 def transcribe_segments(
     diarization_segments: List[Dict[str, Any]],
     audio_array: np.ndarray,
-    model: AutoModelForSpeechSeq2Seq,
-    processor: AutoProcessor,
-    device: torch.device,
-    torch_dtype: torch.dtype,
-    max_target_positions: int,  # Maximum number of tokens the model can generate
-    buffer_tokens: int,  # Additional token buffer to prevent potential overflows
-    transcription_timeout: int,
-    generate_kwargs: Dict[str, Any],
-    confidence_threshold: float,
-    main_language: str = 'en'
+    model_resources: ModelResources,
+    config: TranscriptionConfig,
+    main_language: str  # Now mandatory
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    model = model_resources.model
+    processor = model_resources.processor
+    device = model_resources.device
+    torch_dtype = model_resources.torch_dtype
+    confidence_threshold = config.confidence_threshold
+
     transcription_segments = []
     failed_segments = []
 
@@ -384,19 +402,13 @@ def transcribe_segments(
 
             inputs = {k: v.to(device).to(torch_dtype) for k, v in inputs.items()}
             transcription, overall_confidence, language_token = transcribe_with_retry(
-                model=model,
-                processor=processor,
-                inputs=inputs,
-                generate_kwargs=generate_kwargs,
                 idx=idx,  
                 chunk_start=chunk_start,
                 chunk_end=chunk_end,
-                device=device,
-                torch_dtype=torch_dtype,
-                transcription_timeout=transcription_timeout,
-                max_target_positions=max_target_positions,
-                buffer_tokens=buffer_tokens,
-                main_language=main_language
+                inputs=inputs,
+                model_resources=model_resources,
+                config=config,
+                main_language=main_language  # Pass main_language explicitly
             )
 
             transcript = {
@@ -427,28 +439,25 @@ def transcribe_segments(
     return transcription_segments, failed_segments
 
 def retry_transcriptions(
-    model: AutoModelForSpeechSeq2Seq,
-    processor: AutoProcessor,
     audio_array: np.ndarray,
     diarization_segments: List[Dict[str, Any]],
     failed_segments: List[Dict[str, Any]],
-    generate_kwargs: Dict[str, Any],
-    device: torch.device,
-    torch_dtype: torch.dtype,
-    base_name: str,
     transcription_segments: List[Dict[str, Any]],
-    max_target_positions: int,  # Maximum number of tokens the model can generate
-    buffer_tokens: int,  # Additional token buffer to prevent potential overflows
-    transcription_timeout: int,
-    secondary_language: Optional[str] = None,
-    confidence_threshold: float = 0.6,
-    main_language: str = 'en'
+    model_resources: ModelResources,
+    config: TranscriptionConfig,
+    secondary_language: str  
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    if not secondary_language or not is_valid_language_code(secondary_language):
-        if secondary_language:
-            logging.warning(f"Invalid secondary language code: {secondary_language}")
+    model = model_resources.model
+    processor = model_resources.processor
+    device = model_resources.device
+    torch_dtype = model_resources.torch_dtype
+    generate_kwargs = model_resources.generate_kwargs.copy()
+    confidence_threshold = config.confidence_threshold
+
+    if not is_valid_language_code(secondary_language):
+        logging.warning(f"Invalid secondary language code: {secondary_language}")
         return transcription_segments, failed_segments  # No valid secondary language to retry with
-    
+
     try:
         lang_obj = Lang(secondary_language)
         lang = lang_obj.pt1.lower()
@@ -457,7 +466,7 @@ def retry_transcriptions(
     except (ValueError, AttributeError):
         logging.warning(f"Invalid secondary language code: {secondary_language}")
         return transcription_segments, failed_segments
-    
+
     logging.info(f"Starting retry for failed segments with secondary language '{lang}'.")
     logging.info(f"Number of segments to retry: {len(failed_segments)}")
 
@@ -472,6 +481,14 @@ def retry_transcriptions(
             # Adjust generate_kwargs for secondary language
             current_generate_kwargs = generate_kwargs.copy()
             current_generate_kwargs["language"] = lang
+            # Create a new ModelResources instance with updated generate_kwargs
+            current_model_resources = ModelResources(
+                model=model,
+                processor=processor,
+                device=device,
+                torch_dtype=torch_dtype,
+                generate_kwargs=current_generate_kwargs
+            )
 
             chunk_start = int(start)
             chunk_end = int(end)
@@ -479,20 +496,14 @@ def retry_transcriptions(
             inputs = processor(chunk, sampling_rate=SAMPLING_RATE, return_tensors="pt")
             inputs = {k: v.to(device).to(torch_dtype) for k, v in inputs.items()}
 
-            transcription, overall_confidence, language_token = transcribe_single_segment(
-                model=model,
-                processor=processor,
-                inputs=inputs,
-                generate_kwargs=current_generate_kwargs,
+            transcription, overall_confidence, language_token = transcribe_with_retry(
                 idx=idx,
                 chunk_start=chunk_start,
                 chunk_end=chunk_end,
-                device=device,
-                torch_dtype=torch_dtype,
-                transcription_timeout=transcription_timeout,
-                max_target_positions=max_target_positions,
-                buffer_tokens=buffer_tokens,
-                main_language=lang  # Use secondary language as main_language in retries
+                inputs=inputs,
+                model_resources=current_model_resources,
+                config=config,
+                main_language=lang  # Use secondary_language for retries
             )
 
             if transcription and evaluate_confidence(overall_confidence, language_token, threshold=confidence_threshold, main_language=lang):
@@ -512,21 +523,13 @@ def retry_transcriptions(
             else:
                 logging.warning(f"Retry failed to transcribe segment {idx} with sufficient confidence.")
                 retry_failed_segments.append(failure)
+        except RetryError:
+            logging.error(f"Segment {idx} failed after multiple retry attempts due to timeout.")
+            retry_failed_segments.append({'segment_index': idx, 'segment': seg, 'reason': "Timeout after multiple retries"})
+            continue
         except Exception as e:
             logging.exception(f"Retry for segment {idx} failed: {e}")
             retry_failed_segments.append({'segment_index': idx, 'segment': seg, 'reason': str(e)})
 
     logging.info(f"After retry, {len(retry_failed_segments)} segments still failed.")
     return transcription_segments, retry_failed_segments
-
-
-
-
-
-
-
-
-
-
-
-

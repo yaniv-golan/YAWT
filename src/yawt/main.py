@@ -13,9 +13,9 @@ from yawt.logging_setup import setup_logging
 setup_logging(
     log_directory="logs",
     max_log_size=10 * 1024 * 1024,  # 10 MB maximum log file size
-    backup_count=5,                # Keep up to 5 backup log files
-    debug=False,                   # Disable debug mode by default
-    verbose=False                  # Disable verbose output by default
+    backup_count=5,                  # Keep up to 5 backup log files
+    debug=False,                     # Disable debug mode by default
+    verbose=False                    # Disable verbose output by default
 )
 
 # 4. Import transformers and other necessary modules after logging is configured
@@ -36,13 +36,10 @@ from tqdm import tqdm
 import torch
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 from dotenv import load_dotenv
-import ffmpeg
 import tempfile
-from requests_toolbelt.multipart.encoder import MultipartEncoder, MultipartEncoderMonitor
 from datetime import datetime, timedelta
 import srt
-from logging.handlers import RotatingFileHandler
-import concurrent.futures
+import logging  # Import logging module to use logging throughout the script
 
 # Constants and Configuration
 from yawt.config import (
@@ -57,17 +54,13 @@ os.environ['PYDEVD_DISABLE_FILE_VALIDATION'] = '1'
 from yawt.audio_handler import load_audio, upload_file, download_audio, handle_audio_input
 from yawt.diarization import submit_diarization_job, wait_for_diarization, perform_diarization
 from yawt.transcription import (
-    transcribe_single_segment,
+    transcribe_segments,
     retry_transcriptions,
     load_and_optimize_model,
-    transcribe_segments  
+    ModelResources,          # Import ModelResources
+    TranscriptionConfig      # Import TranscriptionConfig
 )
 from yawt.output_writer import write_transcriptions
-
-import logging
-
-# Configure basic logging settings
-logging.basicConfig(level=logging.INFO)
 
 from yawt.exceptions import ModelLoadError, DiarizationError, TranscriptionError  # Import custom exceptions
 
@@ -115,10 +108,10 @@ def integrate_context_prompt(args, processor, device, torch_dtype):
 def map_speakers(diarization_segments):
     """
     Maps speaker labels to unique speaker IDs.
-    
+
     Args:
         diarization_segments (list): List of diarization segments with 'speaker' key.
-    
+
     Returns:
         list: List of speaker dictionaries with 'id' and 'name'.
     """
@@ -140,13 +133,13 @@ def map_speakers(diarization_segments):
 def validate_output_formats(formats):
     """
     Validates the output formats specified by the user.
-    
+
     Args:
         formats (str or list): Desired output formats.
-    
+
     Returns:
         list: Validated list of output formats.
-    
+
     Raises:
         argparse.ArgumentTypeError: If invalid formats are provided.
     """
@@ -166,12 +159,12 @@ def validate_output_formats(formats):
 def calculate_cost(duration_seconds, cost_per_minute, pyannote_cost_per_hour):
     """
     Calculates the estimated cost based on audio duration.
-    
+
     Args:
         duration_seconds (float): Duration of the audio in seconds.
         cost_per_minute (float): Cost per minute for transcription.
         pyannote_cost_per_hour (float): Cost per hour for diarization.
-    
+
     Returns:
         tuple: Whisper cost, Diarization cost, Total cost.
     """
@@ -185,7 +178,7 @@ def calculate_cost(duration_seconds, cost_per_minute, pyannote_cost_per_hour):
 def parse_arguments():
     """
     Parses command-line arguments provided by the user.
-    
+
     Returns:
         argparse.Namespace: Parsed arguments.
     """
@@ -199,14 +192,14 @@ def parse_arguments():
 
     parser.add_argument('--context-prompt', type=str, help='Context prompt to guide transcription.')
     parser.add_argument('--main-language', type=str, required=True, help='Main language of the audio.')
-    parser.add_argument('--secondary-language', type=str, default=None, help='Secondary language of the audio.')
+    parser.add_argument('--secondary-language', type=str, help='Secondary language of the audio.')  # Remains optional
     parser.add_argument('--num-speakers', type=int, help='Specify the number of speakers if known.')
     parser.add_argument('--dry-run', action='store_true', help='Estimate cost without processing.')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
     parser.add_argument("--pyannote-token", help="Pyannote API token (overrides environment variable)")
     parser.add_argument("--openai-key", help="OpenAI API key (overrides environment variable)")
-    parser.add_argument("--model", default="openai/whisper-large-v3",  
+    parser.add_argument("--model", default="openai/whisper-large-v3",   # Corrected default model
                         help="OpenAI transcription model to use")
     parser.add_argument('--output-format', type=str, nargs='+',
                         default=['text'], help='Desired output format(s): text, json, srt.')
@@ -247,7 +240,7 @@ def main():
         except argparse.ArgumentTypeError as e:
             parser = argparse.ArgumentParser(description="Transcribe audio with speaker diarization")
             parser.error(str(e))
-    
+        
         print(f"Output formats: {args.output_format}")  # Debugging line
     
         # Load and optimize the transcription model
@@ -257,13 +250,38 @@ def main():
         # Integrate context prompt into the transcription process if provided
         decoder_input_ids = integrate_context_prompt(args, processor, device, torch_dtype)
 
+        # Prepare generate_kwargs for initial transcription
+        generate_kwargs = {}
+        if decoder_input_ids is not None:
+            generate_kwargs["decoder_input_ids"] = decoder_input_ids
+
+        # Do not set generate_kwargs["language"] here
+        # The language will be set within the transcription functions based on the main_language parameter
+
+        # Create ModelResources instance
+        model_resources = ModelResources(
+            model=model,
+            processor=processor,
+            device=device,
+            torch_dtype=torch_dtype,
+            generate_kwargs=generate_kwargs
+        )
+
+        # Create TranscriptionConfig instance
+        transcription_config = TranscriptionConfig(
+            transcription_timeout=config.transcription.generate_timeout,
+            max_target_positions=config.transcription.max_target_positions,
+            buffer_tokens=config.transcription.buffer_tokens,
+            confidence_threshold=config.transcription.confidence_threshold
+        )
+    
         # Handle audio input, either from URL or local file
         audio_url, local_audio_path = handle_audio_input(
             args=args,
             supported_upload_services=config.supported_upload_services,
             upload_timeout=config.timeouts.upload_timeout
         )
-
+    
         # Determine base name for output files
         if args.output:
             base_name = args.output
@@ -289,9 +307,9 @@ def main():
                 except Exception as cleanup_error:
                     logging.warning(f"Cleanup failed: {cleanup_error}")
             sys.exit(1)
-
-        logging.debug(f"Diarization Segments Before Mapping: {diarization_segments}")  
-
+    
+        logging.debug(f"Diarization Segments Before Mapping: {diarization_segments}")  # Added back the debug line
+    
         # Map speakers to unique identifiers for clarity in outputs
         speakers = map_speakers(diarization_segments)
 
@@ -309,49 +327,26 @@ def main():
 
         logging.info(f"Processing cost: Whisper=${whisper_cost:.4f}, Diarization=${diarization_cost:.4f}, Total=${total_cost:.4f}")
 
-        # Prepare generate_kwargs for initial transcription with only main_language
-        generate_kwargs = {}
-        if decoder_input_ids is not None:
-            generate_kwargs["decoder_input_ids"] = decoder_input_ids
-        if args.main_language:
-            generate_kwargs["language"] = args.main_language  # Pass only the main language
-
-        # Initial transcription without secondary_languages
+        # Initial transcription without secondary languages
         transcription_segments, failed_segments = transcribe_segments(
-            diarization_segments,
-            audio_array,
-            model,
-            processor,
-            device,
-            torch_dtype,
-            max_target_positions=config.transcription.max_target_positions,
-            buffer_tokens=config.transcription.buffer_tokens,
-            transcription_timeout=config.transcription.generate_timeout,
-            generate_kwargs=generate_kwargs,
-            confidence_threshold=config.transcription.confidence_threshold,
-            main_language=args.main_language  # Use only main language
+            diarization_segments=diarization_segments,
+            audio_array=audio_array,
+            model_resources=model_resources,
+            config=transcription_config,
+            main_language=args.main_language  # Now mandatory
         )
 
-        # Retry transcription for any failed segments using a single secondary language
+        # Retry transcription for any failed segments using secondary language if provided
         if failed_segments and args.secondary_language:
             logging.info("Retrying failed segments with secondary language...")
             transcription_segments, failed_segments = retry_transcriptions(
-                model,
-                processor,
-                audio_array,
-                diarization_segments,
-                failed_segments,
-                generate_kwargs,
-                device,
-                torch_dtype,
-                base_name,
-                transcription_segments,
-                max_target_positions=config.transcription.max_target_positions,
-                buffer_tokens=config.transcription.buffer_tokens,
-                transcription_timeout=config.transcription.generate_timeout,
-                secondary_language=args.secondary_language,  # Now a single string
-                confidence_threshold=config.transcription.confidence_threshold,
-                main_language=args.main_language  # Keep main language reference
+                audio_array=audio_array,
+                diarization_segments=diarization_segments,
+                failed_segments=failed_segments,
+                transcription_segments=transcription_segments,
+                model_resources=model_resources,
+                config=transcription_config,
+                secondary_language=args.secondary_language  # Now optional
             )
 
         # Write the transcriptions to the specified output formats after handling retries
