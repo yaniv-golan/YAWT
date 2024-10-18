@@ -69,6 +69,8 @@ import logging
 # Configure basic logging settings
 logging.basicConfig(level=logging.INFO)
 
+from yawt.exceptions import ModelLoadError, DiarizationError, TranscriptionError  # Import custom exceptions
+
 def check_api_tokens(pyannote_token, openai_key):
     """
     Checks if the required API tokens are set.
@@ -378,9 +380,18 @@ def main():
                 logging.warning(f"Failed to delete temporary file: {e}")
 
         logging.info("Process completed successfully.")
+    except ModelLoadError as e:
+        logging.error(f"Model loading failed: {e}")
+        sys.exit(2)  # Exit code 2 for model loading issues
+    except DiarizationError as e:
+        logging.error(f"Diarization failed: {e}")
+        sys.exit(3)  # Exit code 3 for diarization issues
+    except TranscriptionError as e:
+        logging.error(f"Transcription failed: {e}")
+        sys.exit(4)  # Exit code 4 for transcription issues
     except Exception as e:
         logging.error(f"An unexpected error occurred in main: {e}")
-        sys.exit(1)
+        sys.exit(1)  # Exit code 1 for general errors
 
 if __name__ == '__main__':
     main()

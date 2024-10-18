@@ -155,22 +155,32 @@ def load_config(config_path: Optional[str] = None) -> Config:
 # Example usage:
 # config = load_config(args.config)
 
-def validate_config(config):
+def validate_config(config: Config):
     """
-    Validates the given configuration dictionary.
+    Validates the given configuration.
 
     Args:
-        config (dict): The configuration to validate.
+        config (Config): The configuration object to validate.
 
     Raises:
         ValueError: If the configuration is invalid.
     """
-    if "api_costs" not in config:
+    if not config.api_costs:
         raise ValueError("Configuration must include 'api_costs'.")
-    if "whisper" not in config["api_costs"] or config["api_costs"]["whisper"].get("cost_per_minute", 0) < 0:
+    if config.api_costs.whisper_cost_per_minute < 0:
         raise ValueError("Whisper cost per minute must be non-negative.")
-    if "logging" not in config:
+    if config.api_costs.pyannote_cost_per_hour < 0:
+        raise ValueError("Pyannote cost per hour must be non-negative.")
+    if not config.logging:
         raise ValueError("Configuration must include 'logging'.")
-    if "model" not in config:
+    if not config.model:
         raise ValueError("Configuration must include 'model'.")
+    if not config.supported_upload_services:
+        raise ValueError("Configuration must include 'supported_upload_services'.")
+    if not config.timeouts:
+        raise ValueError("Configuration must include 'timeouts'.")
+    if not config.transcription:
+        raise ValueError("Configuration must include 'transcription'.")
     # Add additional validation rules as needed
+
+__all__ = ["load_config", "validate_config"]
