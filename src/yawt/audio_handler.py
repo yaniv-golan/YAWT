@@ -197,9 +197,11 @@ def handle_audio_input(args, supported_upload_services, upload_timeout):
         audio_url = args.audio_url
         logging.info(f"Using audio URL: {audio_url}")
         try:
-            # Download the audio from the provided URL
-            local_audio_path = download_audio(audio_url, destination_dir=os.path.dirname(args.input_file))  # Set destination_dir appropriately
-            logging.info(f"Downloaded audio to: {local_audio_path}")
+            with tempfile.TemporaryDirectory() as temp_dir:
+                local_audio_path = download_audio(audio_url, destination_dir=temp_dir)
+                logging.info(f"Downloaded audio to: {local_audio_path}")
+                # Keep the temporary directory and file path
+                temp_audio_path = local_audio_path
         except Exception as e:
             logging.error(f"Failed to download audio from URL: {e}")
             sys.exit(1)
