@@ -138,13 +138,13 @@ def upload_file(file_path, service='0x0.st', secret=None, expires=None, supporte
         logging.error(f"Unexpected error during upload: {e}")
         raise
 
-def download_audio(audio_url, destination_dir='/desired/path', download_timeout=None):
+def download_audio(audio_url, destination_dir=None, download_timeout=None):
     """
     Downloads an audio file from the given URL to the specified directory.
     
     Args:
         audio_url (str): URL of the audio file to download.
-        destination_dir (str, optional): Directory to save the downloaded audio. Defaults to '/desired/path'.
+        destination_dir (str, optional): Directory to save the downloaded audio. Defaults to None.
         download_timeout (int, optional): Timeout for the download in seconds. Defaults to None.
     
     Returns:
@@ -153,6 +153,8 @@ def download_audio(audio_url, destination_dir='/desired/path', download_timeout=
     Raises:
         Exception: If the download fails or the file is empty.
     """
+    if destination_dir is None:
+        destination_dir = tempfile.gettempdir()  # Use the system's temporary directory
     try:
         logging.info(f"Downloading audio from {audio_url}...")
         with requests.get(audio_url, stream=True, timeout=download_timeout) as r:
