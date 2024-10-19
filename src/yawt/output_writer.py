@@ -13,7 +13,7 @@ def ensure_directory_exists(file_path):
         file_path (str): The full path of the file.
     """
     directory = os.path.dirname(file_path)
-    if not os.path.exists(directory):
+    if directory and not os.path.exists(directory):
         os.makedirs(directory)
         logging.info(f"Created directory: {directory}")
 
