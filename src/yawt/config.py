@@ -49,11 +49,16 @@ class TranscriptionSettings:
     """
     Configuration for transcription process settings.
     """
-    generate_timeout: int = 300          # Timeout for transcription generation
-    max_target_positions: int = 448      # Maximum number of target positions for the model
-    buffer_tokens: int = 10              # Number of buffer tokens to use during transcription
-    confidence_threshold: float = 0.6    # Confidence threshold for accepting transcriptions
+    generate_timeout: int = 300
+    max_target_positions: int = 448
+    buffer_tokens: int = 10
+    confidence_threshold: float = 0.6
     max_retries: int = 1
+
+    # TODO: Implement validation for these fields to ensure they are within acceptable ranges
+    # For example:
+    # - confidence_threshold should be between 0 and 1
+    # - max_target_positions, buffer_tokens, and max_retries should be positive integers
 
 @dataclass
 class Config:

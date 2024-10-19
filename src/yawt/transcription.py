@@ -78,7 +78,7 @@ def load_and_optimize_model(model_id: str) -> Tuple[AutoModelForSpeechSeq2Seq, A
             model = torch.compile(model, mode="reduce-overhead")
             logging.info("Model optimized with torch.compile.")
         except Exception as e:
-            logging.exception(f"Model optimization failed: {e}")  # Capture stack trace for debugging
+            logging.warning(f"Failed to optimize model with torch.compile: {e}")
 
         # Remove forced_decoder_ids from model configuration if present to avoid unintended behavior
 #        if hasattr(model.config, 'forced_decoder_ids'):
@@ -536,3 +536,63 @@ def retry_transcriptions(
 
     logging.info(f"After retry, {len(retry_failed_segments)} segments still failed.")
     return transcription_segments, retry_failed_segments
+
+def transcribe_audio(audio_array, diarization_segments, base_name, model_resources=None, config=None):
+    """
+    Transcribe audio using the provided model resources and configuration.
+    
+    Args:
+        audio_array (numpy.ndarray): The audio data as a numpy array.
+        diarization_segments (list): List of diarization segments.
+        base_name (str): Base name for the transcription.
+        model_resources (ModelResources, optional): Model resources for transcription.
+        config (TranscriptionConfig, optional): Configuration for transcription.
+    
+    Returns:
+        list: List of transcription segments.
+    """
+    if model_resources is None:
+        model, processor, device, torch_dtype = load_and_optimize_model(config.model_id)
+        model_resources = ModelResources(model, processor, device, torch_dtype, config.generate_kwargs)
+    
+    transcription_segments, failed_segments = transcribe_segments(
+        model_resources,
+        config,
+        diarization_segments,
+        audio_array,
+        base_name
+    )
+    
+    if failed_segments:
+        retry_transcriptions(
+            model_resources.model,
+            model_resources.processor,
+            audio_array,
+            diarization_segments,
+            failed_segments,
+            model_resources.generate_kwargs,
+            model_resources.device,
+            model_resources.torch_dtype,
+            base_name,
+            transcription_segments,
+            config.MAX_RETRIES
+        )
+    
+    return transcription_segments
+
+# Make sure to export the transcribe_audio function
+__all__ = [
+    'load_and_optimize_model',
+    'model_generate_with_timeout',
+    'transcribe_single_segment',
+    'retry_transcriptions',
+    'TimeoutException',
+    'extract_language_token',
+    'is_valid_language_code',
+    'transcribe_audio',  # Add this line
+    'ModelResources',
+    'TranscriptionConfig',
+    'transcribe_segments',
+    'transcribe_with_retry'
+]
+

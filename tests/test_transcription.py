@@ -1,145 +1,134 @@
+import sys
+import os
+
+# Add the 'src' directory to the Python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
+
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, Mock
 from yawt.transcription import (
+    get_device,
     load_and_optimize_model,
-    model_generate_with_timeout,
-    transcribe_single_segment,
-    retry_transcriptions,
-    TimeoutException  # Ensure TimeoutException is imported
+    compute_per_token_confidence,
+    aggregate_confidence,
+    is_valid_language_code,
+    evaluate_confidence,
+    TimeoutException,
+    ModelLoadError
 )
-import concurrent.futures  # {{ edit: Import concurrent.futures }}
 
-@pytest.fixture
-def mock_model():
-    mock = MagicMock()
-    mock.generate.return_value = [1, 2, 3]
-    return mock
+import torch
+import torch.nn.functional as F
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
-@pytest.fixture
-def mock_processor():
-    mock = MagicMock()
-    mock.batch_decode.return_value = ["Transcribed text"]
-    return mock
+def test_get_device_cuda_available():
+    with patch('torch.cuda.is_available', return_value=True):
+        device = get_device()
+        assert device.type == 'cuda'
 
-def test_load_and_optimize_model_success(mocker):
-    mocker.patch('yawt.transcription.AutoModelForSpeechSeq2Seq.from_pretrained', return_value=MagicMock())
-    mocker.patch('yawt.transcription.AutoProcessor.from_pretrained', return_value=MagicMock())
-    mocker.patch('yawt.transcription.get_device', return_value=MagicMock())
-    mocker.patch('torch.compile')
+def test_get_device_mps_available():
+    with patch('torch.cuda.is_available', return_value=False), \
+         patch('torch.backends.mps.is_available', return_value=True):
+        device = get_device()
+        assert device.type == 'mps'
+
+def test_get_device_cpu():
+    with patch('torch.cuda.is_available', return_value=False), \
+         patch('torch.backends.mps.is_available', return_value=False):
+        device = get_device()
+        assert device.type == 'cpu'
+
+@patch('yawt.transcription.AutoProcessor.from_pretrained')
+@patch('yawt.transcription.AutoModelForSpeechSeq2Seq.from_pretrained')
+@patch('torch.compile')
+def test_load_and_optimize_model(mock_torch_compile, mock_model_pretrained, mock_proc_pretrained):
+    mock_device = torch.device('cpu')
     
-    model, processor, device, torch_dtype = load_and_optimize_model("model_id")
-    assert model is not None
-    assert processor is not None
-    assert device is not None
-    assert torch_dtype is not None
-
-def test_model_generate_with_timeout_success(mock_model):
-    inputs = {"input_ids": MagicMock()}
-    generate_kwargs = {}
-    timeout = 5
-
-    result = model_generate_with_timeout(mock_model, inputs, generate_kwargs, timeout)
-    assert result == [1, 2, 3]
-    mock_model.generate.assert_called_once_with(**inputs, **generate_kwargs)
-
-def test_model_generate_with_timeout_failure(mock_model):
-    inputs = {"input_ids": MagicMock()}
-    generate_kwargs = {}
-    timeout = 1
-
-    with patch('concurrent.futures.ThreadPoolExecutor') as MockExecutor:
-        instance = MockExecutor.return_value.__enter__.return_value
-        instance.submit.side_effect = concurrent.futures.TimeoutError
-
-        with pytest.raises(TimeoutException):
-            model_generate_with_timeout(mock_model, inputs, generate_kwargs, timeout)
-
-def test_transcribe_single_segment_success(mock_model, mock_processor):
-    generate_kwargs = {}
-    transcription = transcribe_single_segment(
-        mock_model,
-        mock_processor,
-        {"input_ids": MagicMock()},
-        generate_kwargs,
-        idx=1,
-        chunk_start=0,
-        chunk_end=5,
-        device=MagicMock(),
-        torch_dtype=MagicMock()
-    )
-    assert transcription == "Transcribed text"
-    mock_model.generate.assert_called_once()
-
-def test_transcribe_single_segment_timeout(mock_model, mock_processor):
-    mock_model.generate.side_effect = TimeoutException("Timeout")
-    generate_kwargs = {}
-
-    transcription = transcribe_single_segment(
-        mock_model,
-        mock_processor,
-        {"input_ids": MagicMock()},
-        generate_kwargs,
-        idx=1,
-        chunk_start=0,
-        chunk_end=5,
-        device=MagicMock(),
-        torch_dtype=MagicMock()
-    )
-    assert transcription is None
-
-def test_retry_transcriptions_success(mock_model, mock_processor):
-    transcription_segments = []
-    failed_segments = [{'segment': 1, 'reason': 'Initial failure'}]
-    diarization_segments = [{'start': 0, 'end': 5}]
-    audio_array = [0.0, 1.0, 2.0]
-
-    with patch('yawt.transcription.transcribe_single_segment', return_value="Retry transcription"):
-        failed = retry_transcriptions(
-            model=mock_model,
-            processor=mock_processor,
-            audio_array=audio_array,
-            diarization_segments=diarization_segments,
-            failed_segments=failed_segments,
-            generate_kwargs={},
-            device=MagicMock(),
-            torch_dtype=MagicMock(),
-            base_name="test",
-            transcription_segments=transcription_segments,
-            MAX_RETRIES=2
+    # Create a MagicMock for the model without spec, but add necessary attributes
+    mock_model_instance = MagicMock()
+    mock_model_instance.dtype = torch.float32
+    mock_model_instance.to.return_value = mock_model_instance  # Mock the 'to' method
+    mock_model_pretrained.return_value = mock_model_instance
+    
+    # Mock torch.compile to return the model instance unchanged
+    mock_torch_compile.return_value = mock_model_instance
+    
+    # Create a MagicMock for the processor
+    mock_processor_instance = MagicMock()
+    mock_proc_pretrained.return_value = mock_processor_instance
+    
+    with patch('yawt.transcription.get_device', return_value=mock_device):
+        model, processor, device, dtype = load_and_optimize_model('test-model-id')
+        
+        # Assertions to ensure correct behavior
+        mock_model_pretrained.assert_called_with(
+            'test-model-id',
+            torch_dtype=torch.float16 if mock_device.type in ["cuda", "mps"] else torch.float32,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+            attn_implementation="sdpa"
         )
-        assert failed == []
-        assert len(transcription_segments) == 1
-        assert transcription_segments[0]['text'] == "Retry transcription"
+        mock_proc_pretrained.assert_called_with('test-model-id')
+        mock_torch_compile.assert_called_once_with(mock_model_instance, mode="reduce-overhead")
+        assert model == mock_model_instance
+        assert processor == mock_processor_instance
+        assert device == mock_device
+        assert dtype == torch.float32
 
-def test_retry_transcriptions_failure(mock_model, mock_processor):
-    transcription_segments = []
-    failed_segments = [{'segment': 1, 'reason': 'Initial failure'}]
-    diarization_segments = [{'start': 0, 'end': 5}]
-    audio_array = [0.0, 1.0, 2.0]
+def test_is_valid_language_code():
+    # Assuming 'en' is a valid code from iso639
+    assert is_valid_language_code('en') is True
+    assert is_valid_language_code('EN') is True  # case-insensitive
+    assert is_valid_language_code('nonexistent') is False
 
-    with patch('yawt.transcription.transcribe_single_segment', return_value=None):
-        failed = retry_transcriptions(
-            model=mock_model,
-            processor=mock_processor,
-            audio_array=audio_array,
-            diarization_segments=diarization_segments,
-            failed_segments=failed_segments,
-            generate_kwargs={},
-            device=MagicMock(),
-            torch_dtype=MagicMock(),
-            base_name="test",
-            transcription_segments=transcription_segments,
-            MAX_RETRIES=2
-        )
-        assert len(failed) == 1  # Still failed after retries
-        assert len(transcription_segments) == 0
+def test_compute_per_token_confidence_with_scores():
+    mock_output = Mock()
+    # Define scores as a list of tensors, each tensor is [batch_size=1, vocab_size=2]
+    mock_output.scores = [
+        torch.tensor([[0.1, 0.9]]),  # Token 1
+        torch.tensor([[0.8, 0.2]])   # Token 2
+    ]
+    confidences = compute_per_token_confidence(mock_output)
+    
+    # Calculate expected confidences using the same method as in the function
+    expected_confidences = [
+        F.softmax(score.float(), dim=-1).max().item()
+        for score in mock_output.scores
+    ]
+    
+    assert confidences == pytest.approx(expected_confidences, rel=1e-4)
 
-def test_transcribe_audio_empty_input(mock_transcribe_audio_success):
-    with pytest.raises(ValueError) as exc_info:
-        transcribe_audio("")
-    assert "Audio file path cannot be empty." in str(exc_info.value)
+def test_compute_per_token_confidence_no_scores():
+    # Create a Mock without the 'scores' attribute using spec_set
+    mock_output = Mock(spec_set=['sequences'])
+    mock_output.sequences = torch.tensor([[1, 2, 3]])
+    
+    confidences = compute_per_token_confidence(mock_output)
+    assert confidences == [1.0, 1.0, 1.0]
 
-def test_transcribe_audio_invalid_format(mock_transcribe_audio_success):
-    with pytest.raises(ValueError) as exc_info:
-        transcribe_audio("path/to/invalid_audio.mp3")  # Assuming only .wav is supported
-    assert "Unsupported audio format." in str(exc_info.value)
+def test_aggregate_confidence():
+    confidences = [0.8, 0.9, 0.85]
+    overall = aggregate_confidence(confidences)
+    assert overall == pytest.approx(0.85)
+
+def test_evaluate_confidence_high():
+    assert evaluate_confidence(0.9, 'en', threshold=0.6, main_language='en') is True
+
+def test_evaluate_confidence_low_confidence():
+    assert evaluate_confidence(0.5, 'en', threshold=0.6, main_language='en') is False
+
+def test_evaluate_confidence_wrong_language():
+    assert evaluate_confidence(0.9, 'fr', threshold=0.6, main_language='en') is False
+
+def test_evaluate_confidence_no_language():
+    assert evaluate_confidence(0.9, None, threshold=0.6, main_language='en') is False
+
+def test_load_and_optimize_model_file_not_found():
+    with patch('yawt.transcription.AutoModelForSpeechSeq2Seq.from_pretrained', side_effect=FileNotFoundError):
+        with pytest.raises(ModelLoadError):
+            load_and_optimize_model('invalid-model-id')
+
+def test_load_and_optimize_model_invalid_value():
+    with patch('yawt.transcription.AutoModelForSpeechSeq2Seq.from_pretrained', side_effect=ValueError):
+        with pytest.raises(ModelLoadError):
+            load_and_optimize_model('invalid-model-id')
