@@ -83,11 +83,9 @@ def upload_file(file_path, service='0x0.st', secret=None, expires=None, supporte
                 if expires:
                     encoder.fields['expires'] = expires
 
-                def progress_callback(monitor):
-                    # Update the progress bar based on bytes uploaded
-                    pbar.update(monitor.bytes_read - pbar.n)
-
                 with tqdm(total=encoder.len, unit='B', unit_scale=True, desc="Uploading") as pbar:
+                    def progress_callback(monitor):
+                        pbar.update(monitor.bytes_read - pbar.n)
                     monitor = MultipartEncoderMonitor(encoder, progress_callback)
                     response = requests.post(
                         url,
