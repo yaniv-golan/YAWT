@@ -6,8 +6,8 @@ from datetime import datetime
 from transformers import logging as transformers_logging  # Import Transformers logging utilities
 import warnings  # Import warnings module to filter warnings
 
-# Module-level flag to prevent multiple setups
-_setup_done = False
+# Remove the module-level flag _setup_done
+# _setup_done = False
 
 class ExcludeTransformersFilter(logging.Filter):
     """
@@ -40,9 +40,10 @@ def setup_logging(log_directory, max_log_size, backup_count, debug=False, verbos
         debug (bool): Enable DEBUG level logging.
         verbose (bool): Enable INFO level logging.
     """
-    global _setup_done
-    if _setup_done:
-        return  # Prevent multiple setups
+    # Remove the setup_done check
+    # global _setup_done
+    # if _setup_done:
+    #     return  # Prevent multiple setups
 
     # Ensure the log directory exists
     os.makedirs(log_directory, exist_ok=True)
@@ -121,5 +122,5 @@ def setup_logging(log_directory, max_log_size, backup_count, debug=False, verbos
     # Add the same file handler to the filter diagnostics logger
     filter_logger.addHandler(file_handler)
 
-    # Set the setup flag to prevent re-running the setup
-    _setup_done = True
+    # No need to set _setup_done flag
+    # _setup_done = True

@@ -77,15 +77,15 @@ def test_token_and_key():
     ('max_retries', -1)
 ])
 def test_invalid_transcription_settings(attr, invalid_value):
-    # Create a TranscriptionSettings instance with the invalid value
-    settings = TranscriptionSettings(**{attr: invalid_value})
+    with pytest.raises(ValueError) as exc_info:
+        TranscriptionSettings(**{attr: invalid_value})
     
-    # Assert that the invalid value was set (since there's no validation)
-    assert getattr(settings, attr) == invalid_value
-    
-    # Add a message suggesting to implement validation
-    print(f"\nNote: The TranscriptionSettings class accepted an invalid value ({invalid_value}) for {attr}.")
-    print("Consider adding validation to the TranscriptionSettings class to prevent this.")
+    assert str(exc_info.value) == (
+        "confidence_threshold must be between 0 and 1." if attr == 'confidence_threshold' else
+        "max_target_positions must be a positive integer." if attr == 'max_target_positions' else
+        "buffer_tokens must be zero or a positive integer." if attr == 'buffer_tokens' else
+        "max_retries must be zero or a positive integer."
+    )
 
 def test_custom_config():
     custom_values = {

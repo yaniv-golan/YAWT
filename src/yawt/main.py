@@ -10,13 +10,13 @@ warnings.filterwarnings("ignore", message=".*transformers.*", category=FutureWar
 from yawt.logging_setup import setup_logging
 
 # 3. Initialize logging with specified parameters
-setup_logging(
-    log_directory="logs",
-    max_log_size=10 * 1024 * 1024,  # 10 MB maximum log file size
-    backup_count=5,                  # Keep up to 5 backup log files
-    debug=False,                     # Disable debug mode by default
-    verbose=False                    # Disable verbose output by default
-)
+# setup_logging(
+#     log_directory="logs",
+#     max_log_size=10 * 1024 * 1024,  # 10 MB maximum log file size
+#     backup_count=5,                  # Keep up to 5 backup log files
+#     debug=False,                     # Disable debug mode by default
+#     verbose=False                    # Disable verbose output by default
+# )
 
 # 4. Import transformers and other necessary modules after logging is configured
 import transformers
@@ -182,7 +182,19 @@ def parse_arguments():
     Returns:
         argparse.Namespace: Parsed arguments.
     """
-    parser = argparse.ArgumentParser(description="Transcribe audio with speaker diarization")
+    import argparse  # Ensure argparse is imported if not already
+
+    # Custom ArgumentParser to override the default error message
+    class CustomArgumentParser(argparse.ArgumentParser):
+        def error(self, message):
+            if 'one of the arguments --audio-url --input-file is required' in message:
+                self.print_usage(sys.stderr)
+                self.exit(2, 'Error: You must provide either --audio-url or --input-file.\n')
+            else:
+                super().error(message)
+    
+    # Use the CustomArgumentParser instead of the default ArgumentParser
+    parser = CustomArgumentParser(description="Transcribe audio with speaker diarization")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--audio-url', type=str, help='Publicly accessible URL of the audio file to transcribe.')
     group.add_argument('--input-file', type=str, help='Path to the local audio file to transcribe.')
@@ -217,7 +229,7 @@ def main():
         # Load and validate configurations from the config file
         config = load_config(args.config)
                 
-        # Setup logging based on configuration and command-line overrides
+        # Setup logging using command-line arguments and configuration
         setup_logging(
             log_directory=config.logging.log_directory,
             max_log_size=config.logging.max_log_size,
@@ -229,7 +241,7 @@ def main():
         logging.info("Script started.")
     
         # Load and log API tokens
-        config.load_and_log_tokens(args, logging)
+        config.load_and_log_tokens(args)  # Removed the 'logging' argument
     
         # Check if API tokens are set, exit if not
         check_api_tokens(config.pyannote_token, config.openai_key)
@@ -390,3 +402,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

@@ -2,8 +2,26 @@ import requests
 import logging
 import time
 import sys
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
-def submit_diarization_job(pyannote_token, audio_url, num_speakers, diarization_timeout, retries=0, max_retries=3):
+def is_rate_limit_exception(exception):
+    """
+    Custom predicate to check for rate limit exceptions.
+
+    Args:
+        exception (Exception): The exception to check.
+
+    Returns:
+        bool: True if it's a rate limit exception, False otherwise.
+    """
+    return isinstance(exception, Exception) and '429' in str(exception)
+
+@retry(
+    retry=retry_if_exception(is_rate_limit_exception),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=4, max=10)
+)
+def submit_diarization_job(pyannote_token, audio_url, num_speakers, diarization_timeout):
     """
     Submits a diarization job to the Pyannote API.
 
@@ -12,8 +30,6 @@ def submit_diarization_job(pyannote_token, audio_url, num_speakers, diarization_
         audio_url (str): URL of the audio file to be diarized.
         num_speakers (int, optional): Expected number of speakers. Defaults to None.
         diarization_timeout (int): Timeout for the diarization request in seconds.
-        retries (int, optional): Current retry attempt. Defaults to 0.
-        max_retries (int, optional): Maximum number of retry attempts. Defaults to 3.
 
     Returns:
         str: Job ID of the submitted diarization job.
@@ -33,14 +49,10 @@ def submit_diarization_job(pyannote_token, audio_url, num_speakers, diarization_
             logging.info(f"Diarization job submitted: {job_info['jobId']}")
             return job_info['jobId']
         elif response.status_code == 429:
-            # Handle rate limiting by retrying after the specified time
-            retry_after = int(response.headers.get('Retry-After', 60))
-            logging.warning(f"Rate limit exceeded. Retrying after {retry_after} seconds.")
-            if retries >= max_retries:
-                logging.error("Max retries reached. Unable to submit diarization job.")
-                raise Exception("Max retries reached for diarization submission.")
-            time.sleep(retry_after)
-            return submit_diarization_job(pyannote_token, audio_url, num_speakers, diarization_timeout, retries+1, max_retries)
+            # Raise exception to trigger retry
+            error_msg = f"Rate limit exceeded: {response.status_code} {response.text}"
+            logging.warning(error_msg)
+            raise Exception(error_msg)
         else:
             # Log and raise exception for other HTTP errors
             error_msg = f"Diarization submission failed: {response.status_code} {response.text}"
@@ -57,6 +69,11 @@ def submit_diarization_job(pyannote_token, audio_url, num_speakers, diarization_
         logging.error(error_msg)
         raise
 
+@retry(
+    retry=retry_if_exception(is_rate_limit_exception),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=4, max=10)
+)
 def get_job_status(pyannote_token, job_id, job_status_timeout):
     """
     Retrieves the status of a submitted diarization job.
@@ -70,7 +87,7 @@ def get_job_status(pyannote_token, job_id, job_status_timeout):
         dict: JSON response containing job status and details.
 
     Raises:
-        Exception: If retrieving job status fails.
+        Exception: If retrieving job status fails after maximum retries.
     """
     headers = {'Authorization': f'Bearer {pyannote_token}'}
     try:
@@ -79,11 +96,10 @@ def get_job_status(pyannote_token, job_id, job_status_timeout):
         if response.status_code == 200:
             return response.json()
         elif response.status_code == 429:
-            # Handle rate limiting by retrying after the specified time
-            retry_after = int(response.headers.get('Retry-After', 60))
-            logging.warning(f"Rate limit exceeded. Retrying after {retry_after} seconds.")
-            time.sleep(retry_after)
-            return get_job_status(pyannote_token, job_id, job_status_timeout)
+            # Raise exception to trigger retry
+            error_msg = f"Rate limit exceeded: {response.status_code} {response.text}"
+            logging.warning(error_msg)
+            raise Exception(error_msg)
         else:
             # Log and raise exception for other HTTP errors
             error_msg = f"Failed to get job status: {response.status_code} {response.text}"

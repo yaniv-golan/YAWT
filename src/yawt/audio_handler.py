@@ -7,7 +7,8 @@ import requests
 from requests_toolbelt.multipart.encoder import MultipartEncoder, MultipartEncoderMonitor
 from tqdm import tqdm
 import logging
-from yawt.config import SAMPLING_RATE  # Import the SAMPLING_RATE constant
+from yawt.config import SAMPLING_RATE, APP_NAME, APP_VERSION, CONTACT_INFO
+import mimetypes
 
 def load_audio(input_file, sampling_rate=SAMPLING_RATE, download_timeout=None):
     """
@@ -26,6 +27,15 @@ def load_audio(input_file, sampling_rate=SAMPLING_RATE, download_timeout=None):
         Exception: For any unexpected errors.
     """
     try:
+        # Determine the file type
+        file_type, _ = mimetypes.guess_type(input_file)
+        is_video = file_type and file_type.startswith('video')
+        
+        if is_video:
+            logging.info(f"Input file {input_file} is a video. Extracting audio.")
+        else:
+            logging.info(f"Input file {input_file} is an audio file.")
+
         # Use FFmpeg to convert audio to a raw floating-point format
         out, _ = (
             ffmpeg.input(input_file, threads=0)
@@ -74,7 +84,8 @@ def upload_file(file_path, service='0x0.st', secret=None, expires=None, supporte
     try:
         if service == '0x0.st':
             url = 'https://0x0.st'
-            headers = {'User-Agent': 'TranscriberWithContext/1.0 (your_email@example.com)'}
+            user_agent = f"{APP_NAME}/{APP_VERSION} ({CONTACT_INFO})"
+            headers = {'User-Agent': user_agent}
             logging.info(f"Uploading '{file_path}' to '{service}'...")
             with open(file_path, 'rb') as f:
                 encoder = MultipartEncoder(fields={'file': (os.path.basename(file_path), f)})
@@ -104,7 +115,7 @@ def upload_file(file_path, service='0x0.st', secret=None, expires=None, supporte
 
         elif service == 'file.io':
             url = 'https://file.io/'
-            headers = {'User-Agent': 'TranscriberWithContext/1.0 (your_email@example.com)'}
+            headers = {'User-Agent': f"{APP_NAME}/{APP_VERSION} ({CONTACT_INFO})"}
             logging.info(f"Uploading '{file_path}' to '{service}'...")
             with open(file_path, 'rb') as f:
                 encoder = MultipartEncoder(fields={'file': (os.path.basename(file_path), f)})
@@ -178,6 +189,19 @@ def download_audio(audio_url, destination_dir=None, download_timeout=None):
         logging.error(f"Error during audio download: {e}")
         raise
 
+def extract_audio(input_file, output_file):
+    try:
+        (
+            ffmpeg
+            .input(input_file)
+            .output(output_file, acodec='pcm_s16le', ac=1, ar='16k')
+            .overwrite_output()
+            .run(capture_stdout=True, capture_stderr=True)
+        )
+    except ffmpeg.Error as e:
+        logging.error(f"FFmpeg error: {e.stderr.decode()}")
+        raise
+
 def handle_audio_input(args, supported_upload_services, upload_timeout):
     """
     Handles the input audio by either downloading it from a URL or uploading a local file.
@@ -211,17 +235,32 @@ def handle_audio_input(args, supported_upload_services, upload_timeout):
             logging.error(f"Input file {input_file} does not exist.")
             sys.exit(1)
         logging.info(f"Using local file: {input_file}")
+        
+        # Check if the input is a video file
+        file_type, _ = mimetypes.guess_type(input_file)
+        is_video = file_type and file_type.startswith('video')
+        
+        if is_video:
+            logging.info("Input is a video file. Extracting audio...")
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_audio:
+                extract_audio(input_file, temp_audio.name)
+                input_file = temp_audio.name
+        
         try:
-            # Upload the local audio file to the specified service
             audio_url = upload_file(
                 input_file, 
                 service='0x0.st', 
                 supported_upload_services=supported_upload_services,
-                upload_timeout=upload_timeout  # Passed upload_timeout parameter
+                upload_timeout=upload_timeout
             )
             logging.info(f"Uploaded to '0x0.st': {audio_url}")
             local_audio_path = input_file
         except Exception as e:
-            logging.error(f"File upload failed: {e}")
+            logging.error(f"Failed to upload audio: {e}")
             sys.exit(1)
+        
+        # Clean up temporary file if it was created
+        if is_video:
+            os.remove(input_file)
+    
     return audio_url, local_audio_path

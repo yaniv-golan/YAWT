@@ -11,6 +11,7 @@ from iso639 import iter_langs, Lang
 from yawt.exceptions import ModelLoadError  # Import the custom exception
 from tenacity import retry, stop_after_attempt, wait_exponential, RetryError
 from dataclasses import dataclass
+import tenacity
 
 # Define constants
 DEFAULT_MAX_NEW_TOKENS = 256  # Maximum number of new tokens to generate during model inference

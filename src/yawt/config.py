@@ -5,8 +5,26 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 import os
 import logging
+import requests
 
 SAMPLING_RATE = 16000
+
+# New constants
+APP_NAME = "YAWT"
+REPO_OWNER = "yaniv-golan"
+REPO_NAME = "YAWT"
+
+# Fetch the latest release tag
+try:
+    response = requests.get(f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest")
+    if response.status_code == 200:
+        APP_VERSION = response.json()['tag_name']
+    else:
+        APP_VERSION = "unknown"
+except Exception:
+    APP_VERSION = "unknown"
+
+CONTACT_INFO = f"https://github.com/{REPO_OWNER}/{REPO_NAME}"
 
 @dataclass
 class APICosts:
@@ -55,10 +73,15 @@ class TranscriptionSettings:
     confidence_threshold: float = 0.6
     max_retries: int = 1
 
-    # TODO: Implement validation for these fields to ensure they are within acceptable ranges
-    # For example:
-    # - confidence_threshold should be between 0 and 1
-    # - max_target_positions, buffer_tokens, and max_retries should be positive integers
+    def __post_init__(self):
+        if not (0 <= self.confidence_threshold <= 1):
+            raise ValueError("confidence_threshold must be between 0 and 1.")
+        if self.max_target_positions <= 0:
+            raise ValueError("max_target_positions must be a positive integer.")
+        if self.buffer_tokens < 0:
+            raise ValueError("buffer_tokens must be zero or a positive integer.")
+        if self.max_retries < 0:
+            raise ValueError("max_retries must be zero or a positive integer.")
 
 @dataclass
 class Config:
@@ -74,36 +97,37 @@ class Config:
     pyannote_token: Optional[str] = None                                      # Optional Pyannote API token
     openai_key: Optional[str] = None                                           # Optional OpenAI API key
 
-def load_and_log_tokens(self, args, logger):
-    # Check Pyannote token
-    if args.pyannote_token:
-        self.pyannote_token = args.pyannote_token
-        logger.debug("Pyannote token loaded from command-line arguments.")
-    elif self.pyannote_token:
-        if os.getenv("PYANNOTE_TOKEN") == self.pyannote_token:
-            logger.debug("Pyannote token loaded from environment variable.")
+    def load_and_log_tokens(self, args):  # Removed 'logger' parameter
+        import logging  # Use the logging module directly
+        # Check Pyannote token
+        if args.pyannote_token:
+            self.pyannote_token = args.pyannote_token
+            logging.debug("Pyannote token loaded from command-line arguments.")  # Updated to use logging
+        elif self.pyannote_token:
+            if os.getenv("PYANNOTE_TOKEN") == self.pyannote_token:
+                logging.debug("Pyannote token loaded from environment variable.")
+            else:
+                logging.debug("Pyannote token loaded from config file.")
+        elif os.getenv("PYANNOTE_TOKEN"):
+            self.pyannote_token = os.getenv("PYANNOTE_TOKEN")
+            logging.debug("Pyannote token loaded from environment variable.")
         else:
-            logger.debug("Pyannote token loaded from config file.")
-    elif os.getenv("PYANNOTE_TOKEN"):
-        self.pyannote_token = os.getenv("PYANNOTE_TOKEN")
-        logger.debug("Pyannote token loaded from environment variable.")
-    else:
-        logger.error("Pyannote token not found in args, config, or environment variables.")
+            logging.error("Pyannote token not found in args, config, or environment variables.")
 
-    # Check OpenAI key
-    if args.openai_key:
-        self.openai_key = args.openai_key
-        logger.debug("OpenAI key loaded from command-line arguments.")
-    elif self.openai_key:
-        if os.getenv("OPENAI_KEY") == self.openai_key:
-            logger.debug("OpenAI key loaded from environment variable.")
+        # Check OpenAI key
+        if args.openai_key:
+            self.openai_key = args.openai_key
+            logging.debug("OpenAI key loaded from command-line arguments.")
+        elif self.openai_key:
+            if os.getenv("OPENAI_KEY") == self.openai_key:
+                logging.debug("OpenAI key loaded from environment variable.")
+            else:
+                logging.debug("OpenAI key loaded from config file.")
+        elif os.getenv("OPENAI_KEY"):
+            self.openai_key = os.getenv("OPENAI_KEY")
+            logging.debug("OpenAI key loaded from environment variable.")
         else:
-            logger.debug("OpenAI key loaded from config file.")
-    elif os.getenv("OPENAI_KEY"):
-        self.openai_key = os.getenv("OPENAI_KEY")
-        logger.debug("OpenAI key loaded from environment variable.")
-    else:
-        logger.error("OpenAI key not found in args, config, or environment variables.")
+            logging.error("OpenAI key not found in args, config, or environment variables.")
 
 def load_config(config_path: Optional[str] = None) -> Config:
     """
@@ -152,8 +176,6 @@ def load_config(config_path: Optional[str] = None) -> Config:
     # Override logging debug and verbose flags with environment variables if set
     config.logging.debug = config.logging.debug or os.getenv("DEBUG") == "true"
     config.logging.verbose = config.logging.verbose or os.getenv("VERBOSE") == "true"
-
-    config.load_and_log_tokens = load_and_log_tokens.__get__(config)
 
     return config  # Return the fully loaded and configured Config object
 
