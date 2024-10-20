@@ -15,8 +15,7 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 import json
-from iso639 import Lang
-from iso639.exceptions import InvalidLanguageValue
+from iso639 import Lang, exceptions as iso639_exceptions
 from decimal import Decimal, InvalidOperation
 
 
@@ -157,10 +156,14 @@ class Segment:
             except (ValueError, InvalidOperation):
                 raise InvalidConfidenceError("Segment confidence must be a float between 0.0 and 1.0")
         
-        # Validate language
-        if self.language is not None and not isinstance(self.language, Lang):
-            raise InvalidLanguageCodeError(f"language must be an instance of Lang from iso639 (got {self.language})")
-        
+        # Validate language if provided
+        if self.language is not None:
+            if not isinstance(self.language, Lang):
+                try:
+                    self.language = Lang(self.language)
+                except iso639_exceptions.InvalidLanguageValue:
+                    raise InvalidLanguageCodeError(f"Invalid language code: {self.language}")
+                        
         # Validate words
         if self.words:
             for word in self.words:
@@ -178,6 +181,9 @@ class Transcript:
 class StandardTranscriptionJSON:
     metadata: Metadata
     transcript: Transcript
+
+    def to_dict(self) -> Dict[str, Any]:
+        return self._asdict()
 
     @classmethod
     def from_file(cls, filename: str) -> 'StandardTranscriptionJSON':
@@ -309,5 +315,6 @@ class StandardTranscriptionJSON:
     def _get_lang_by_code(self, code: str) -> Lang:
         try:
             return Lang(code)
-        except InvalidLanguageValue:
+        except iso639_exceptions.InvalidLanguageValue:
             raise InvalidLanguageCodeError(f"Invalid language code: {code}")
+
