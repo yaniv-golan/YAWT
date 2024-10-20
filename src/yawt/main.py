@@ -37,7 +37,7 @@ import torch
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 from dotenv import load_dotenv
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import srt
 import logging  # Import logging module to use logging throughout the script
 
@@ -63,6 +63,11 @@ from yawt.transcription import (
 from yawt.output_writer import write_transcriptions
 
 from yawt.exceptions import ModelLoadError, DiarizationError, TranscriptionError  # Import custom exceptions
+from yawt.stj import (
+    StandardTranscriptionJSON, Transcriber, Metadata, Transcript,
+    Speaker, Segment, Word
+)
+from iso639 import Lang
 
 def check_api_tokens(pyannote_token, openai_key):
     """
@@ -143,7 +148,7 @@ def validate_output_formats(formats):
     Raises:
         argparse.ArgumentTypeError: If invalid formats are provided.
     """
-    valid = {'text', 'json', 'srt'}
+    valid = {'text', 'stj', 'srt'}
     if isinstance(formats, list):
         # Join all elements and split to handle comma-separated or space-separated inputs
         formats = ' '.join(formats).replace(',', ' ').split()
@@ -153,7 +158,7 @@ def validate_output_formats(formats):
     formats = [fmt.strip().lower() for fmt in formats if fmt.strip()]
     invalid = set(formats) - valid
     if invalid:
-        raise argparse.ArgumentTypeError(f"Invalid formats: {', '.join(invalid)}. Choose from text, json, srt.")
+        raise argparse.ArgumentTypeError(f"Invalid formats: {', '.join(invalid)}. Choose from text, stj, srt.")
     return formats
 
 def calculate_cost(duration_seconds, cost_per_minute, pyannote_cost_per_hour):
@@ -213,8 +218,8 @@ def parse_arguments():
     parser.add_argument("--openai-key", help="OpenAI API key (overrides environment variable)")
     parser.add_argument("--model", default="openai/whisper-large-v3",   # Corrected default model
                         help="OpenAI transcription model to use")
-    parser.add_argument('--output-format', type=str, nargs='+',
-                        default=['text'], help='Desired output format(s): text, json, srt.')
+    parser.add_argument('--output-format', type=str, nargs='+', default=['text'],
+                        help='Desired output format(s): text, stj, srt.')
     parser.add_argument("-o", "--output", help="Base path for output files (without extension)")
     return parser.parse_args()
 
@@ -361,8 +366,50 @@ def main():
                 secondary_language=args.secondary_language  # Now optional
             )
 
-        # Write the transcriptions to the specified output formats after handling retries
-        write_transcriptions(args.output_format, base_name, transcription_segments, speakers)
+        # Create the STJ instance
+        stj = StandardTranscriptionJSON(
+            metadata=Metadata(
+                transcriber=Transcriber(name="YAWT", version="0.4.0"),
+                created_at=datetime.now(timezone.utc),
+                # Optionally, include additional metadata fields
+            ),
+            transcript=Transcript()
+        )
+
+        for speaker in speakers:
+            stj.transcript.speakers.append(
+                Speaker(
+                    id=speaker['id'],
+                    name=speaker.get('name'),
+                    additional_info=speaker.get('additional_info', {})
+                )
+            )
+
+        for segment in transcription_segments:
+            language = Lang(segment['language']) if segment.get('language') else None
+            words = [
+                Word(
+                    start=word['start'],
+                    end=word['end'],
+                    text=word['text'],
+                    confidence=word.get('confidence')
+                ) for word in segment.get('words', [])
+            ] if segment.get('words') else None
+
+            stj_segment = Segment(
+                start=segment['start'],
+                end=segment['end'],
+                text=segment['text'],
+                speaker_id=segment.get('speaker_id'),
+                confidence=segment.get('confidence'),
+                language=language,
+                words=words,
+                additional_info=segment.get('additional_info', {})
+            )
+            stj.transcript.segments.append(stj_segment)
+
+        # Pass the STJ instance to write_transcriptions
+        write_transcriptions(args.output_format, base_name, stj)
 
         if failed_segments:
             logging.warning(f"{len(failed_segments)} segments failed to transcribe after all retry attempts.")
