@@ -34,13 +34,6 @@ jobs:
       run: |
         pytest --cov=src/yawt tests/ --cov-report=xml
 
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-        files: ./coverage.xml
-        fail_ci_if_error: true
-        slug: yaniv-golan/YAWT
 
     - name: Upload coverage to Coveralls
       uses: coverallsapp/github-action@v2
