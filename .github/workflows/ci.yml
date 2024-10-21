@@ -40,6 +40,7 @@ jobs:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: ./coverage.xml
         fail_ci_if_error: true
+        slug: yaniv-golan/YAWT
 
     - name: Upload coverage to Coveralls
       uses: coverallsapp/github-action@v2
