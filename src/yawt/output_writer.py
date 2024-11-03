@@ -3,7 +3,7 @@ import os
 import logging
 import srt
 from datetime import timedelta
-from yawt.stj import StandardTranscriptionJSON, STJError, InvalidConfidenceError, InvalidLanguageCodeError
+from stjlib import StandardTranscriptionJSON
 
 def ensure_directory_exists(file_path):
     """
@@ -18,14 +18,14 @@ def ensure_directory_exists(file_path):
         os.makedirs(directory)
         logging.info(f"Created directory: {directory}")
 
-def write_transcriptions(output_format, base_name, stj: StandardTranscriptionJSON):
+def write_transcriptions(output_format, base_name, transcription_doc: StandardTranscriptionJSON):
     """
     Writes transcriptions to the specified formats.
     
     Args:
         output_format (list): List of desired output formats ('text', 'json', 'srt').
         base_name (str): Base name for the output files.
-        stj (StandardTranscriptionJSON): The STJ instance to extract data from.
+        transcription_doc (StandardTranscriptionJSON): The STJ instance to extract data from.
     """
     output_files = []  # Initialize a list to keep track of generated output files
     
@@ -36,8 +36,8 @@ def write_transcriptions(output_format, base_name, stj: StandardTranscriptionJSO
     ensure_directory_exists(base_name)
     
     # Extract data from the STJ instance
-    speakers = {speaker.id: speaker.name or speaker.id for speaker in stj.transcript.speakers}
-    segments = stj.transcript.segments
+    speakers = {speaker.id: speaker.name or speaker.id for speaker in transcription_doc.transcript.speakers}
+    segments = transcription_doc.transcript.segments
 
     # Generate Text Output
     if 'text' in output_format:
@@ -76,18 +76,62 @@ def write_transcriptions(output_format, base_name, stj: StandardTranscriptionJSO
 
     # Generate STJ Output
     if 'stj' in output_format:
-        stj_file = f"{base_name}.stj.json"
+        stj_file = f"{base_name}.stjson"
         try:
-            stj.save(stj_file)
+            # Convert to dictionary and write as JSON
+            stj_data = transcription_doc.to_dict()
+            with open(stj_file, 'w', encoding='utf-8') as f:
+                json.dump({"stj": stj_data}, f, indent=2, ensure_ascii=False)
             logging.info(f"STJ transcription saved to {stj_file}")
             output_files.append(stj_file)
-        except (InvalidConfidenceError, InvalidLanguageCodeError, STJError) as e:
-            logging.error(f"Failed to write STJ JSON file: {e}")
         except Exception as e:
-            logging.error(f"An unexpected error occurred while writing STJ file: {e}")
+            logging.error(f"Failed to write STJ file: {e}")
 
     if output_files:
         # If any output files were generated, print a list of them with full paths
         print("\nGenerated Output Files:")
         for file in output_files:
             print(f"- {file}")
+
+class STJWriter:
+    def __init__(self, config, context=None):
+        self.config = config
+        self.context = context
+
+    def create_metadata(self):
+        metadata = {
+            "title": self.config.get("title", ""),
+            "language": self.config.get("language", ""),
+            "extensions": {
+                "YAWT": {
+                    "model": {
+                        "name": self.config.get("model", ""),
+                        "parameters": self.config.get("model_parameters", {})
+                    },
+                    "speaker_recognition": {
+                        "api": self.config.get("speaker_recognition_api", ""),
+                        "parameters": self.config.get("speaker_recognition_parameters", {})
+                    },
+                    "context": self.context if self.context else None,
+                    "version": "1.0"
+                }
+            }
+        }
+        return metadata
+
+    def write(self, transcription_data, output_file):
+        stj_data = {
+            "metadata": self.create_metadata(),
+            "segments": [
+                {
+                    "start": segment["start"],
+                    "end": segment["end"],
+                    "speaker": segment.get("speaker", ""),
+                    "text": segment["text"]
+                }
+                for segment in transcription_data
+            ]
+        }
+        
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(stj_data, f, indent=2, ensure_ascii=False)

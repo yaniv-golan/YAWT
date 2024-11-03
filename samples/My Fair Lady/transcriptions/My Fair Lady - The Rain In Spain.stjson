@@ -1,0 +1,379 @@
+{
+  "stj": {
+    "stj": {
+      "version": "0.6.0",
+      "transcript": {
+        "segments": [
+          {
+            "text": "you",
+            "start": 2.565,
+            "end": 2.765,
+            "speaker_id": "Speaker1",
+            "confidence": 0.6951066851615906,
+            "language": "en"
+          },
+          {
+            "text": "the",
+            "start": 3.205,
+            "end": 4.905,
+            "speaker_id": "Speaker1",
+            "confidence": 0.5301984995603561,
+            "language": "en"
+          },
+          {
+            "text": "you",
+            "start": 5.205,
+            "end": 5.945,
+            "speaker_id": "Speaker1",
+            "confidence": 0.6951066851615906,
+            "language": "en"
+          },
+          {
+            "text": "Pain stays mainly in...",
+            "start": 6.165,
+            "end": 9.065,
+            "speaker_id": "Speaker1",
+            "confidence": 0.671428419649601,
+            "language": "en"
+          },
+          {
+            "text": "in the",
+            "start": 9.625,
+            "end": 11.565,
+            "speaker_id": "Speaker1",
+            "confidence": 0.7398232618967692,
+            "language": "en"
+          },
+          {
+            "text": "What was that?",
+            "start": 13.585,
+            "end": 14.185,
+            "speaker_id": "Speaker2",
+            "confidence": 0.7408248901367187,
+            "language": "en"
+          },
+          {
+            "text": "The rain in Spain stays mainly",
+            "start": 20.925,
+            "end": 26.345,
+            "speaker_id": "Speaker1",
+            "confidence": 0.8259618750640324,
+            "language": "en"
+          },
+          {
+            "text": "in the place",
+            "start": 26.645,
+            "end": 28.425,
+            "speaker_id": "Speaker1",
+            "confidence": 0.6204435378313065,
+            "language": "en"
+          },
+          {
+            "text": "Again?",
+            "start": 34.705,
+            "end": 35.365,
+            "speaker_id": "Speaker2",
+            "confidence": 0.7241930564244589,
+            "language": "en"
+          },
+          {
+            "text": "The rain in Spain stays mainly in the past.",
+            "start": 37.585,
+            "end": 42.985,
+            "speaker_id": "Speaker1",
+            "confidence": 0.8814290870319713,
+            "language": "en"
+          },
+          {
+            "text": "I think she's gone.",
+            "start": 43.325,
+            "end": 44.285,
+            "speaker_id": "Speaker2",
+            "confidence": 0.871763105903353,
+            "language": "en"
+          },
+          {
+            "text": "I think she's got it.",
+            "start": 44.925,
+            "end": 46.045,
+            "speaker_id": "Speaker2",
+            "confidence": 0.8689582422375679,
+            "language": "en"
+          },
+          {
+            "text": "The",
+            "start": 46.525,
+            "end": 47.845,
+            "speaker_id": "Speaker1",
+            "confidence": 0.16931499540805817,
+            "language": "en"
+          },
+          {
+            "text": "rain and",
+            "start": 47.845,
+            "end": 48.105,
+            "speaker_id": "Speaker3",
+            "confidence": 0.41082698727647465,
+            "language": "en"
+          },
+          {
+            "text": "Mainly in the play",
+            "start": 48.105,
+            "end": 51.225,
+            "speaker_id": "Speaker1",
+            "confidence": 0.693822231888771,
+            "language": "en"
+          },
+          {
+            "text": "Bye, George.",
+            "start": 51.445,
+            "end": 52.645,
+            "speaker_id": "Speaker2",
+            "confidence": 0.951092529296875,
+            "language": "en"
+          },
+          {
+            "text": "By George, he's got it.",
+            "start": 52.785,
+            "end": 54.185,
+            "speaker_id": "Speaker2",
+            "confidence": 0.741425053940879,
+            "language": "en"
+          },
+          {
+            "text": "Now once again, where does it race?",
+            "start": 54.625,
+            "end": 57.225,
+            "speaker_id": "Speaker2",
+            "confidence": 0.873295646905899,
+            "language": "en"
+          },
+          {
+            "text": "On the plane, on the plane",
+            "start": 58.025,
+            "end": 61.205,
+            "speaker_id": "Speaker3",
+            "confidence": 0.803371824324131,
+            "language": "en"
+          },
+          {
+            "text": "And where's that soggy plane?",
+            "start": 61.205,
+            "end": 64.165,
+            "speaker_id": "Speaker2",
+            "confidence": 0.9520508978101943,
+            "language": "en"
+          },
+          {
+            "text": "In Spain, in Spain",
+            "start": 64.345,
+            "end": 67.565,
+            "speaker_id": "Speaker3",
+            "confidence": 0.7029994626839956,
+            "language": "en"
+          },
+          {
+            "text": "is",
+            "start": 67.565,
+            "end": 71.665,
+            "speaker_id": "Speaker2",
+            "confidence": 0.5426589548587799,
+            "language": "en"
+          },
+          {
+            "text": "is",
+            "start": 67.645,
+            "end": 71.405,
+            "speaker_id": "Speaker3",
+            "confidence": 0.5426589548587799,
+            "language": "en"
+          },
+          {
+            "text": "you",
+            "start": 71.665,
+            "end": 71.805,
+            "speaker_id": "Speaker3",
+            "confidence": 0.6951066851615906,
+            "language": "en"
+          },
+          {
+            "text": "Bravo!",
+            "start": 71.805,
+            "end": 77.885,
+            "speaker_id": "Speaker2",
+            "confidence": 0.6023616890112559,
+            "language": "en"
+          },
+          {
+            "text": "In the face",
+            "start": 75.625,
+            "end": 78.505,
+            "speaker_id": "Speaker3",
+            "confidence": 0.4567228201776743,
+            "language": "en"
+          },
+          {
+            "text": "In Hartford, Hereford and Hampshire.",
+            "start": 80.465,
+            "end": 83.105,
+            "speaker_id": "Speaker2",
+            "confidence": 0.8923355042934418,
+            "language": "en"
+          },
+          {
+            "text": "Hurricanes hardly happen.",
+            "start": 83.845,
+            "end": 86.045,
+            "speaker_id": "Speaker3",
+            "confidence": 0.7889034897089005,
+            "language": "en"
+          },
+          {
+            "text": "How kind of you to let",
+            "start": 89.765,
+            "end": 92.865,
+            "speaker_id": "Speaker3",
+            "confidence": 0.8627017864159175,
+            "language": "en"
+          },
+          {
+            "text": "Let me come.",
+            "start": 92.865,
+            "end": 93.945,
+            "speaker_id": "Speaker2",
+            "confidence": 0.7563048079609871,
+            "language": "en"
+          },
+          {
+            "text": "Where does it rest?",
+            "start": 94.125,
+            "end": 95.285,
+            "speaker_id": "Speaker2",
+            "confidence": 0.7416529953479767,
+            "language": "en"
+          },
+          {
+            "text": "On the plane, on the plane",
+            "start": 96.065,
+            "end": 99.125,
+            "speaker_id": "Speaker3",
+            "confidence": 0.8121443167328835,
+            "language": "en"
+          },
+          {
+            "text": "And where's that blaster?",
+            "start": 99.225,
+            "end": 101.865,
+            "speaker_id": "Speaker2",
+            "confidence": 0.8898050934076309,
+            "language": "en"
+          },
+          {
+            "text": "In Spain, in Spain",
+            "start": 102.365,
+            "end": 105.165,
+            "speaker_id": "Speaker3",
+            "confidence": 0.7416889170805613,
+            "language": "en"
+          },
+          {
+            "text": "Oh",
+            "start": 105.165,
+            "end": 111.525,
+            "speaker_id": "Speaker4",
+            "confidence": 0.575125053524971,
+            "language": "en"
+          },
+          {
+            "text": "Oh",
+            "start": 111.705,
+            "end": 131.505,
+            "speaker_id": "Speaker4",
+            "confidence": 0.46864140406250954,
+            "language": "en"
+          },
+          {
+            "text": "Yeah.",
+            "start": 132.225,
+            "end": 133.245,
+            "speaker_id": "Speaker4",
+            "confidence": 0.586413748562336,
+            "language": "en"
+          },
+          {
+            "text": "Hey!",
+            "start": 133.825,
+            "end": 141.785,
+            "speaker_id": "Speaker4",
+            "confidence": 0.3256601591904958,
+            "language": "en"
+          },
+          {
+            "text": "Oh! Hey!",
+            "start": 145.445,
+            "end": 147.445,
+            "speaker_id": "Speaker4",
+            "confidence": 0.7148980259895324,
+            "language": "en"
+          },
+          {
+            "text": "Oh!",
+            "start": 149.125,
+            "end": 151.805,
+            "speaker_id": "Speaker4",
+            "confidence": 0.4521980881690979,
+            "language": "en"
+          },
+          {
+            "text": "Oh, no!",
+            "start": 152.665,
+            "end": 155.385,
+            "speaker_id": "Speaker4",
+            "confidence": 0.7264684021472931,
+            "language": "en"
+          }
+        ],
+        "speakers": [
+          {
+            "id": "Speaker1",
+            "name": "Speaker 1"
+          },
+          {
+            "id": "Speaker2",
+            "name": "Speaker 2"
+          },
+          {
+            "id": "Speaker3",
+            "name": "Speaker 3"
+          },
+          {
+            "id": "Speaker4",
+            "name": "Speaker 4"
+          }
+        ]
+      },
+      "metadata": {
+        "transcriber": {
+          "name": "YAWT",
+          "version": "0.4.0"
+        },
+        "created_at": "2024-11-03T12:14:20.865427Z",
+        "extensions": {
+          "YAWT": {
+            "model": {
+              "name": "openai/whisper-large-v3",
+              "parameters": {
+                "return_dict_in_generate": true,
+                "output_scores": true,
+                "use_cache": true
+              }
+            },
+            "speaker_recognition": {
+              "api": "pyannote"
+            }
+          }
+        }
+      }
+    }
+  }
+}

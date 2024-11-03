@@ -9,6 +9,13 @@ from tqdm import tqdm
 import logging
 from yawt.config import SAMPLING_RATE, APP_NAME, APP_VERSION, CONTACT_INFO
 import mimetypes
+from dataclasses import dataclass
+
+@dataclass
+class AudioInput:
+    input_url: str
+    local_audio_path: str
+    should_delete_local_audio_file: bool
 
 def load_audio(input_file, sampling_rate=SAMPLING_RATE, download_timeout=None):
     """
@@ -212,22 +219,51 @@ def handle_audio_input(args, supported_upload_services, upload_timeout):
         upload_timeout (int): Timeout for the upload in seconds.
     
     Returns:
-        tuple: A tuple containing the audio URL and the local path to the audio file.
+        AudioInput: Structured input containing input URL, local path, and deletion flag.
     
     Raises:
         SystemExit: If downloading or uploading fails.
     """
     if args.audio_url:
-        audio_url = args.audio_url
-        logging.info(f"Using audio URL: {audio_url}")
+        input_url = args.audio_url
+        logging.info(f"Using provided input URL: {input_url}")
         try:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                local_audio_path = download_audio(audio_url, destination_dir=temp_dir)
-                logging.info(f"Downloaded audio to: {local_audio_path}")
-                # Keep the temporary directory and file path
-                temp_audio_path = local_audio_path
+            # Determine if the provided URL is an audio or video file
+            file_type, _ = mimetypes.guess_type(input_url)
+            is_video = file_type and file_type.startswith('video')
+
+            if is_video:
+                logging.info("Provided URL points to a video file. Processing to extract audio.")
+                # Create a temporary directory that persists after function returns
+                temp_dir = tempfile.mkdtemp()
+                downloaded_file_path = download_audio(input_url, destination_dir=temp_dir)
+                logging.info(f"Downloaded video/audio to: {downloaded_file_path}")
+
+                # Extract audio from the downloaded video file
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_audio:
+                    extract_audio(downloaded_file_path, temp_audio.name)
+                    local_audio_path = temp_audio.name
+                    # Indicate that the local audio file is temporary and should be deleted
+                    should_delete_local_audio_file = True
+                logging.info(f"Extracted audio to: {local_audio_path}")
+
+                # Upload the extracted audio to obtain a new input_url
+                input_url = upload_file(
+                    local_audio_path,
+                    service='0x0.st',
+                    supported_upload_services=supported_upload_services,
+                    upload_timeout=upload_timeout
+                )
+                logging.info(f"Uploaded extracted audio to '0x0.st': {input_url}")
+            else:
+                logging.info("Provided URL points to an audio file. Using it directly.")
+                # Download the audio file to a local path for processing
+                temp_dir = tempfile.mkdtemp()
+                local_audio_path = download_audio(input_url, destination_dir=temp_dir)
+                # Indicate that the local audio file is temporary and should be deleted
+                should_delete_local_audio_file = True
         except Exception as e:
-            logging.error(f"Failed to download audio from URL: {e}")
+            logging.error(f"Failed to process input URL: {e}")
             sys.exit(1)
     else:
         input_file = args.input_file
@@ -244,23 +280,35 @@ def handle_audio_input(args, supported_upload_services, upload_timeout):
             logging.info("Input is a video file. Extracting audio...")
             with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_audio:
                 extract_audio(input_file, temp_audio.name)
-                input_file = temp_audio.name
-        
-        try:
-            audio_url = upload_file(
-                input_file, 
-                service='0x0.st', 
-                supported_upload_services=supported_upload_services,
-                upload_timeout=upload_timeout
-            )
-            logging.info(f"Uploaded to '0x0.st': {audio_url}")
-            local_audio_path = input_file
-        except Exception as e:
-            logging.error(f"Failed to upload audio: {e}")
-            sys.exit(1)
-        
-        # Clean up temporary file if it was created
-        if is_video:
-            os.remove(input_file)
+                local_audio_path = temp_audio.name
+                # Indicate that the local audio file is temporary and should be deleted
+                should_delete_local_audio_file = True
+            # Upload the extracted audio to obtain input_url
+            try:
+                input_url = upload_file(
+                    local_audio_path,
+                    service='0x0.st',
+                    supported_upload_services=supported_upload_services,
+                    upload_timeout=upload_timeout
+                )
+                logging.info(f"Uploaded extracted audio to '0x0.st': {input_url}")
+            except Exception as e:
+                logging.error(f"Failed to upload extracted audio: {e}")
+                sys.exit(1)
+        else:
+            try:
+                input_url = upload_file(
+                    input_file, 
+                    service='0x0.st', 
+                    supported_upload_services=supported_upload_services,
+                    upload_timeout=upload_timeout
+                )
+                logging.info(f"Uploaded to '0x0.st': {input_url}")
+                local_audio_path = input_file
+                # Indicate that the local audio file should not be deleted
+                should_delete_local_audio_file = False
+            except Exception as e:
+                logging.error(f"Failed to upload audio: {e}")
+                sys.exit(1)
     
-    return audio_url, local_audio_path
+    return AudioInput(input_url, local_audio_path, should_delete_local_audio_file)

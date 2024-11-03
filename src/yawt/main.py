@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 
-# 1. Import warnings and configure them before any other imports to suppress specific warnings from transformers
+import sys
+import os
+
+# Add the parent directory to PYTHONPATH to ensure modules can be imported correctly
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# 1. Import warnings and configure them before other imports
 import warnings
 warnings.filterwarnings("ignore", message=".*transformers.*", category=UserWarning)
 warnings.filterwarnings("ignore", message=".*transformers.*", category=DeprecationWarning)
 warnings.filterwarnings("ignore", message=".*transformers.*", category=FutureWarning)
 
-# 2. Now import the setup_logging function from the logging_setup module
+# 2. Change relative import to absolute import
 from yawt.logging_setup import setup_logging
 
 # 3. Initialize logging with specified parameters
@@ -21,12 +27,6 @@ from yawt.logging_setup import setup_logging
 # 4. Import transformers and other necessary modules after logging is configured
 import transformers
 
-import sys
-import os
-
-# Add the parent directory to PYTHONPATH to ensure modules can be imported correctly
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import argparse
 import json
 import time
@@ -40,6 +40,7 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 import srt
 import logging  # Import logging module to use logging throughout the script
+from typing import Optional, Tuple  # Add this import at the top with other imports
 
 # Constants and Configuration
 from yawt.config import (
@@ -63,11 +64,17 @@ from yawt.transcription import (
 from yawt.output_writer import write_transcriptions
 
 from yawt.exceptions import ModelLoadError, DiarizationError, TranscriptionError  # Import custom exceptions
-from yawt.stj import (
-    StandardTranscriptionJSON, Transcriber, Metadata, Transcript,
-    Speaker, Segment, Word
-)
 from iso639 import Lang
+
+from stjlib import StandardTranscriptionJSON
+from stjlib.core.data_classes import STJ, Metadata, Transcript, Transcriber, Speaker, Segment, Word
+
+from yawt.constants import (
+    MODEL_RETURN_DICT_IN_GENERATE,
+    MODEL_OUTPUT_SCORES,
+    MODEL_USE_CACHE,
+    SPEAKER_RECOGNITION_API
+)
 
 def check_api_tokens(pyannote_token, openai_key):
     """
@@ -88,12 +95,12 @@ def check_api_tokens(pyannote_token, openai_key):
         logging.error("OPENAI_KEY is not set. Please provide it via the config file or environment variable.")
         sys.exit(1)
 
-def integrate_context_prompt(args, processor, device, torch_dtype):
+def integrate_context_prompt(context_prompt: Optional[str], processor, device, torch_dtype):
     """
     Integrates context prompt into transcription by tokenizing and preparing decoder input ids.
     
     Args:
-        args: Parsed command-line arguments.
+        context_prompt: The context prompt string.
         processor: The processor for the transcription model.
         device: The device to run the model on.
         torch_dtype: The data type for torch tensors.
@@ -101,12 +108,12 @@ def integrate_context_prompt(args, processor, device, torch_dtype):
     Returns:
         torch.Tensor or None: The decoder input ids if context prompt is provided, else None.
     """
-    if args.context_prompt:
+    if context_prompt:
         logging.info("Integrating context prompt into transcription.")
         # Tokenize the context prompt without adding special tokens
-        prompt_encoded = processor.tokenizer(args.context_prompt, return_tensors="pt", add_special_tokens=False)
+        prompt_encoded = processor.tokenizer(context_prompt, return_tensors="pt", add_special_tokens=False)
         # Move the input ids to the specified device and dtype
-        decoder_input_ids = prompt_encoded['input_ids'].to(device).to(torch_dtype)
+        decoder_input_ids = prompt_encoded['input_ids'].to(device).to(torch_dtype).long()
         return decoder_input_ids
     return None
 
@@ -223,6 +230,90 @@ def parse_arguments():
     parser.add_argument("-o", "--output", help="Base path for output files (without extension)")
     return parser.parse_args()
 
+def construct_output_paths(args, audio_input) -> Tuple[str, str]:
+    """
+    Constructs output directory and base name based on input type and output argument.
+    
+    Args:
+        args: Command line arguments
+        audio_input: Audio input object containing input details
+        
+    Returns:
+        Tuple[str, str]: (output_dir, base_name) where:
+            - output_dir is the full path to the output directory
+            - base_name is the full path including directory and base filename (without extension)
+    """
+    # Determine the source filename based on input type
+    if args.input_file:
+        # For local files (audio or video), use the original filename
+        source_filename = os.path.basename(args.input_file)
+    elif args.audio_url:
+        # For URLs, try to get the filename from the URL
+        url_path = args.audio_url.split('?')[0]  # Remove query parameters
+        source_filename = os.path.basename(url_path)
+        # If URL doesn't have a clear filename, use a default
+        if not source_filename or source_filename.endswith('/'):
+            source_filename = 'audio_download'
+    else:
+        # Fallback case (shouldn't happen due to argument validation)
+        source_filename = 'unknown_source'
+
+    # Remove extension from source filename
+    base_filename = os.path.splitext(source_filename)[0]
+
+    if args.output:
+        # Use provided output directory
+        output_dir = args.output
+        # Create output directory if it doesn't exist
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+            logging.info(f"Created output directory: {output_dir}")
+        # Construct full base name including directory
+        base_name = os.path.join(output_dir, base_filename)
+    else:
+        # No output directory specified, use current directory
+        output_dir = os.getcwd()
+        base_name = base_filename
+
+    logging.info(f"Output directory: {output_dir}")
+    logging.info(f"Base name for outputs: {base_name}")
+    
+    return output_dir, base_name
+
+def add_yawt_metadata_extension(metadata: Metadata, config: Config, args, context: str = None):
+    """
+    Adds YAWT-specific extension to STJ metadata.
+    """
+    # Initialize extensions dictionary if it doesn't exist
+    if metadata.extensions is None:
+        metadata.extensions = {}
+
+    yawt_extension = {
+        "model": {
+            "name": config.model.default_model_id,
+            "parameters": {
+                "return_dict_in_generate": MODEL_RETURN_DICT_IN_GENERATE,
+                "output_scores": MODEL_OUTPUT_SCORES,
+                "use_cache": MODEL_USE_CACHE
+            }
+        },
+        "speaker_recognition": {
+            "api": SPEAKER_RECOGNITION_API
+        }
+    }
+
+    # Only add context if it was specified
+    if context:
+        yawt_extension["context"] = context
+
+    # Only add num_speakers if it was specified
+    if args.num_speakers is not None:
+        yawt_extension["speaker_recognition"]["parameters"] = {
+            "num_speakers": args.num_speakers
+        }
+    
+    metadata.extensions["YAWT"] = yawt_extension
+
 def main():
     """
     Main function to orchestrate the transcription and diarization process.
@@ -265,7 +356,12 @@ def main():
         model, processor, device, torch_dtype = load_and_optimize_model(model_id)
 
         # Integrate context prompt into the transcription process if provided
-        decoder_input_ids = integrate_context_prompt(args, processor, device, torch_dtype)
+        decoder_input_ids = integrate_context_prompt(
+            context_prompt=args.context_prompt,
+            processor=processor,
+            device=device,
+            torch_dtype=torch_dtype
+        )
 
         # Prepare generate_kwargs for initial transcription
         generate_kwargs = {}
@@ -284,43 +380,43 @@ def main():
             generate_kwargs=generate_kwargs
         )
 
-        # Create TranscriptionConfig instance
+        # Create TranscriptionConfig instance with context prompt
         transcription_config = TranscriptionConfig(
             transcription_timeout=config.transcription.generate_timeout,
             max_target_positions=config.transcription.max_target_positions,
             buffer_tokens=config.transcription.buffer_tokens,
-            confidence_threshold=config.transcription.confidence_threshold
+            confidence_threshold=config.transcription.confidence_threshold,
+            context_prompt=args.context_prompt  # Pass context prompt from args
         )
     
         # Handle audio input, either from URL or local file
-        audio_url, local_audio_path = handle_audio_input(
+        audio_input = handle_audio_input(
             args=args,
             supported_upload_services=config.supported_upload_services,
             upload_timeout=config.timeouts.upload_timeout
         )
-    
-        # Determine base name for output files
-        if args.output:
-            base_name = args.output
-        else:
-            base_name = os.path.splitext(os.path.basename(audio_url if args.audio_url else args.input_file))[0]
-        logging.info(f"Base name for outputs: {base_name}")
-
+        
+        # Load the audio array before any potential deletion
+        audio_array = load_audio(audio_input.local_audio_path)
+        
+        # Determine output paths using the helper function
+        output_dir, base_name = construct_output_paths(args, audio_input)
+        
         # Submit diarization job and wait for its completion
         try:
             diarization_segments = perform_diarization(
                 config.pyannote_token, 
-                audio_url, 
+                audio_input.input_url, 
                 args.num_speakers, 
                 config.timeouts.diarization_timeout,
                 config.timeouts.job_status_timeout  # Pass job_status_timeout
             )
         except Exception as e:
             logging.exception(f"Diarization error: {e}")  # Capture stack trace
-            if args.audio_url and os.path.exists(local_audio_path):
+            if os.path.exists(audio_input.local_audio_path) and audio_input.should_delete_local_audio_file:
                 try:
-                    os.remove(local_audio_path)
-                    logging.info(f"Deleted temporary file: {local_audio_path}")
+                    os.remove(audio_input.local_audio_path)
+                    logging.info(f"Deleted temporary file: {audio_input.local_audio_path}")
                 except Exception as cleanup_error:
                     logging.warning(f"Cleanup failed: {cleanup_error}")
             sys.exit(1)
@@ -329,21 +425,34 @@ def main():
     
         # Map speakers to unique identifiers for clarity in outputs
         speakers = map_speakers(diarization_segments)
-
-        # Load audio data into an array for processing
-        audio_array = load_audio(local_audio_path)
+    
+        # Instantiate the Metadata and Transcript objects
+        metadata = Metadata(
+            transcriber=Transcriber(name="YAWT", version="0.4.0"),
+            created_at=datetime.now(timezone.utc)
+        )
+        add_yawt_metadata_extension(metadata, config, args, args.context_prompt)
+    
+        transcript = Transcript()
+    
+        # Pass the Metadata and Transcript instances to the constructor
+        transcription_doc = StandardTranscriptionJSON(
+            metadata=metadata,
+            transcript=transcript
+        )
+    
         total_duration = len(audio_array) / SAMPLING_RATE  
         whisper_cost, diarization_cost, total_cost = calculate_cost(
             total_duration, config.api_costs.whisper_cost_per_minute, config.api_costs.pyannote_cost_per_hour
         )
-
+    
         # Handle dry-run option to estimate costs without actual processing
         if args.dry_run:
             print(f"Estimated cost: ${total_cost:.4f} USD")
             sys.exit(0)
-
+    
         logging.info(f"Processing cost: Whisper=${whisper_cost:.4f}, Diarization=${diarization_cost:.4f}, Total=${total_cost:.4f}")
-
+    
         # Initial transcription without secondary languages
         transcription_segments, failed_segments = transcribe_segments(
             diarization_segments=diarization_segments,
@@ -352,7 +461,7 @@ def main():
             config=transcription_config,
             main_language=args.main_language  # Now mandatory
         )
-
+    
         # Retry transcription for any failed segments using secondary language if provided
         if failed_segments and args.secondary_language:
             logging.info("Retrying failed segments with secondary language...")
@@ -365,28 +474,22 @@ def main():
                 config=transcription_config,
                 secondary_language=args.secondary_language  # Now optional
             )
-
-        # Create the STJ instance
-        stj = StandardTranscriptionJSON(
-            metadata=Metadata(
-                transcriber=Transcriber(name="YAWT", version="0.4.0"),
-                created_at=datetime.now(timezone.utc),
-                # Optionally, include additional metadata fields
-            ),
-            transcript=Transcript()
-        )
-
+    
+        # Add speakers
         for speaker in speakers:
-            stj.transcript.speakers.append(
+            transcription_doc.transcript.speakers.append(
                 Speaker(
                     id=speaker['id'],
                     name=speaker.get('name'),
-                    additional_info=speaker.get('additional_info', {})
                 )
             )
-
+    
+        # Add segments
         for segment in transcription_segments:
-            language = Lang(segment['language']) if segment.get('language') else None
+            # Get the language code, preferring ISO 639-1 (2-letter code)
+            lang_obj = Lang(segment['language']) if segment.get('language') else None
+            language_code = lang_obj.pt1 if lang_obj else None
+            
             words = [
                 Word(
                     start=word['start'],
@@ -402,20 +505,19 @@ def main():
                 text=segment['text'],
                 speaker_id=segment.get('speaker_id'),
                 confidence=segment.get('confidence'),
-                language=language,
+                language=language_code,  # Now passing just the 2-letter code
                 words=words,
-                additional_info=segment.get('additional_info', {})
             )
-            stj.transcript.segments.append(stj_segment)
-
+            transcription_doc.transcript.segments.append(stj_segment)
+    
         # Pass the STJ instance to write_transcriptions
-        write_transcriptions(args.output_format, base_name, stj)
-
+        write_transcriptions(args.output_format, base_name, transcription_doc)
+    
         if failed_segments:
             logging.warning(f"{len(failed_segments)} segments failed to transcribe after all retry attempts.")
             for failed_segment in failed_segments:
                 logging.warning(f"Failed segment: {failed_segment}")
-
+    
         # Recalculate costs if retries were attempted
         whisper_cost, diarization_cost, total_cost = calculate_cost(
             total_duration, config.api_costs.whisper_cost_per_minute, config.api_costs.pyannote_cost_per_hour
@@ -424,15 +526,15 @@ def main():
         print(f"Transcription Cost: ${whisper_cost:.4f} USD")
         print(f"Diarization Cost: ${diarization_cost:.4f} USD")
         print(f"Total Estimated Cost: ${total_cost:.4f} USD\n")
-
-        # Cleanup temporary audio file if processing from a URL
-        if args.audio_url:
+    
+        # Cleanup temporary audio file if required
+        if audio_input.should_delete_local_audio_file:
             try:
-                os.remove(local_audio_path)
-                logging.info(f"Deleted temporary file: {local_audio_path}")
+                os.remove(audio_input.local_audio_path)
+                logging.info(f"Deleted temporary file: {audio_input.local_audio_path}")
             except Exception as e:
                 logging.warning(f"Failed to delete temporary file: {e}")
-
+    
         logging.info("Process completed successfully.")
     except ModelLoadError as e:
         logging.error(f"Model loading failed: {e}")

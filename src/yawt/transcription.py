@@ -2,7 +2,7 @@ import logging
 import concurrent.futures
 from typing import List, Dict, Tuple, Optional, Any
 import torch
-from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, WhisperProcessor
 from tqdm import tqdm
 from yawt.config import SAMPLING_RATE
 import torch.nn.functional as F
@@ -12,6 +12,11 @@ from yawt.exceptions import ModelLoadError  # Import the custom exception
 from tenacity import retry, stop_after_attempt, wait_exponential, RetryError
 from dataclasses import dataclass
 import tenacity
+from yawt.constants import (
+    MODEL_RETURN_DICT_IN_GENERATE,
+    MODEL_OUTPUT_SCORES,
+    MODEL_USE_CACHE
+)
 
 # Define constants
 DEFAULT_MAX_NEW_TOKENS = 256  # Maximum number of new tokens to generate during model inference
@@ -51,13 +56,42 @@ def load_and_optimize_model(model_id: str) -> Tuple[AutoModelForSpeechSeq2Seq, A
         device = get_device()
         torch_dtype = torch.float16 if device.type in ["cuda", "mps"] else torch.float32
 
-        # Load the pre-trained speech-to-text model with specified configurations
+        # Try loading with WhisperProcessor directly
+        try:
+            processor = WhisperProcessor.from_pretrained(
+                model_id,
+                trust_remote_code=True
+            )
+        except Exception as e:
+            logging.error(f"Failed to load processor: {e}")
+            raise
+
+        # Basic parameters that work with all versions
+        model_args = {
+            "torch_dtype": torch_dtype,
+            "low_cpu_mem_usage": True,
+            "trust_remote_code": True  # Add this to match processor loading
+        }
+
+        # Check transformers version for feature support
+        import transformers
+        version = tuple(map(int, transformers.__version__.split('.')))
+        
+        # use_safetensors supported from 4.26.0
+        if version >= (4, 26, 0):
+            model_args["use_safetensors"] = True
+            
+        # attn_implementation supported from 4.28.0 and requires PyTorch 2.0+
+        if version >= (4, 28, 0) and torch.__version__ >= "2.0.0":
+            if torch_dtype in [torch.float16, torch.bfloat16]:
+                model_args["attn_implementation"] = "sdpa"
+            else:
+                logging.info("Using default attention implementation due to full precision mode")
+
+        logging.debug(f"Loading model with args: {model_args}")
         model = AutoModelForSpeechSeq2Seq.from_pretrained(
             model_id,
-            torch_dtype=torch_dtype,
-            low_cpu_mem_usage=True,
-            use_safetensors=True,
-            attn_implementation="sdpa"
+            **model_args
         ).to(device)
 
         # Convert model to half precision if on CUDA or MPS for performance
@@ -65,8 +99,6 @@ def load_and_optimize_model(model_id: str) -> Tuple[AutoModelForSpeechSeq2Seq, A
             model = model.half()
             logging.info("Converted model to float16.")
 
-        # Load the corresponding processor for the model
-        processor = AutoProcessor.from_pretrained(model_id)
         logging.info(f"Model loaded on {device} with dtype {model.dtype}.")
 
         import warnings
@@ -81,12 +113,8 @@ def load_and_optimize_model(model_id: str) -> Tuple[AutoModelForSpeechSeq2Seq, A
         except Exception as e:
             logging.warning(f"Failed to optimize model with torch.compile: {e}")
 
-        # Remove forced_decoder_ids from model configuration if present to avoid unintended behavior
-#        if hasattr(model.config, 'forced_decoder_ids'):
-#            model.config.forced_decoder_ids = None
-#            logging.info("Removed forced_decoder_ids from model config.")
-
         return model, processor, device, torch_dtype
+
     except FileNotFoundError as fnf_error:
         logging.exception(f"Model file not found: {fnf_error}")
         raise ModelLoadError("Model file is missing.") from fnf_error
@@ -122,10 +150,10 @@ def model_generate_with_timeout(
         # Add necessary generation parameters
         adjusted_kwargs = generate_kwargs.copy()
         adjusted_kwargs['input_features'] = inputs['input_features']
-        adjusted_kwargs['return_dict_in_generate'] = True  # Ensure detailed output
-        adjusted_kwargs['output_scores'] = True            # Include scores
+        adjusted_kwargs['return_dict_in_generate'] = MODEL_RETURN_DICT_IN_GENERATE  # Ensure detailed output
+        adjusted_kwargs['output_scores'] = MODEL_OUTPUT_SCORES                      # Include scores
         logging.debug(f"Final generate_kwargs before generation: {adjusted_kwargs}")
-        return model.generate(**adjusted_kwargs, use_cache=True)
+        return model.generate(**adjusted_kwargs, use_cache=MODEL_USE_CACHE)
     
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future = executor.submit(generate)
@@ -221,6 +249,12 @@ class TranscriptionConfig:
     max_target_positions: int
     buffer_tokens: int
     confidence_threshold: float
+    context_prompt: Optional[str] = None  # Store context prompt in config
+
+def prepare_input_ids(context, tokenizer, device):
+    # Encode the context and ensure the tensor is of type Long
+    input_ids = tokenizer.encode(context, return_tensors='pt').to(device).long()
+    return input_ids
 
 def transcribe_single_segment(
     idx: int,
@@ -286,6 +320,12 @@ def transcribe_single_segment(
 
         logging.debug(f"Segment {idx}: Input features shape: {inputs['input_features'].shape}")
         logging.debug(f"Segment {idx}: Generate kwargs: {adjusted_generate_kwargs}")
+
+        # Prepare decoder_input_ids with correct dtype
+        decoder_input_ids = prepare_input_ids(config.context_prompt, processor.tokenizer, device) if config.context_prompt else None
+
+        if decoder_input_ids is not None:
+            adjusted_generate_kwargs["decoder_input_ids"] = decoder_input_ids  # Ensure decoder_input_ids are integers and passed to model.generate
 
         with torch.no_grad():  # Disable gradient computation during inference
             outputs = model_generate_with_timeout(
@@ -596,4 +636,26 @@ __all__ = [
     'transcribe_segments',
     'transcribe_with_retry'
 ]
+
+def integrate_context_prompt(context_prompt: Optional[str], processor, device, torch_dtype):
+    """
+    Integrates context prompt into transcription by tokenizing and preparing decoder input ids.
+    
+    Args:
+        context_prompt: The context prompt string.
+        processor: The processor for the transcription model.
+        device: The device to run the model on.
+        torch_dtype: The data type for torch tensors.
+    
+    Returns:
+        torch.Tensor or None: The decoder input ids if context prompt is provided, else None.
+    """
+    if context_prompt:
+        logging.info("Integrating context prompt into transcription.")
+        # Tokenize the context prompt without adding special tokens
+        prompt_encoded = processor.tokenizer(context_prompt, return_tensors="pt", add_special_tokens=False)
+        # Move the input ids to the specified device and dtype
+        decoder_input_ids = prompt_encoded['input_ids'].to(device).to(torch_dtype).long()
+        return decoder_input_ids
+    return None
 

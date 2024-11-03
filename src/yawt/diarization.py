@@ -137,7 +137,7 @@ def wait_for_diarization(pyannote_token, job_id, audio_url, diarization_timeout,
     start_time = time.time()
     retries = 0
     max_retries = 3  # Maximum number of retries for canceled jobs
-    check_interval = 30  # Seconds between status checks
+    check_interval = 5  # Seconds between status checks
 
     logging.info("Waiting for speaker recognition to complete...")
 
