@@ -12,6 +12,8 @@ YAWT is a Python-based audio transcription tool that uses OpenAI's Whisper model
 - [Testing](#testing)
 - [Contributing](#contributing)
 - [License](#license)
+- [Acknowledgments](#acknowledgments)
+- [Building Executables](#building-executables)
 
 ## Features
 
@@ -145,3 +147,27 @@ Please ensure that your code follows PEP8 guidelines, and add or update tests as
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+Special thanks to [Lior Atias](https://www.linkedin.com/in/lioratias/) for allowing the inclusion of our podcast conversation as a test file in this project. The episode is in Hebrew, with intermixed English terms, so `--main-language he --secondary-language he` :
+
+- Local test file: `samples/multi-lang/podcast - Lior Atias - Executive Summary/Lior Atias - Executive Summary - Oct 22, 2024 - with Yaniv Golan.mp3`
+- Original episode: [Listen on Spotify](https://open.spotify.com/episode/3EpOe03k99TJPdy2HXILRN?si=9wt19jz9T8GQTwd1bG-fUg)
+
+## Building Executables
+
+Build for the current platform:
+
+```bash
+python freeze.py build
+```
+
+The executable will be created in `build/` directory with a platform-specific name:
+
+- macOS ARM: `yawt-macos-arm64`
+- macOS Intel: `yawt-macos-x86_64`
+- Linux: `yawt-linux-x86_64`
+- Windows: `yawt-win-x86_64.exe`
+
+Note: For best compatibility, build on each target platform separately.
