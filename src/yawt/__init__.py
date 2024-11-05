@@ -12,5 +12,4 @@ from .transcription import (
     TimeoutException,
     extract_language_token,
     is_valid_language_code,
-    transcribe_audio
 )

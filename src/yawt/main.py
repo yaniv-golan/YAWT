@@ -59,7 +59,7 @@ from yawt.transcription import (
     retry_transcriptions,
     load_and_optimize_model,
     ModelResources,          # Import ModelResources
-    TranscriptionConfig      # Import TranscriptionConfig
+    TranscriptionConfig,      # Import TranscriptionConfig
 )
 from yawt.output_writer import write_transcriptions
 
@@ -223,7 +223,8 @@ def parse_arguments():
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
     parser.add_argument("--pyannote-token", help="Pyannote API token (overrides environment variable)")
     parser.add_argument("--openai-key", help="OpenAI API key (overrides environment variable)")
-    parser.add_argument("--model", default="openai/whisper-large-v3",   # Corrected default model
+    parser.add_argument("--model", type=str, default="openai/whisper-large-v3",
+                        choices=["openai/whisper-large-v3", "openai/whisper-large-v3-turbo"],
                         help="OpenAI transcription model to use")
     parser.add_argument('--output-format', type=str, nargs='+', default=['text'],
                         help='Desired output format(s): text, stj, srt.')
@@ -353,14 +354,14 @@ def main():
     
         # Load and optimize the transcription model
         model_id = args.model or config.model.default_model_id  # Use config default if args.model is None
-        model, processor, device, torch_dtype = load_and_optimize_model(model_id)
+        model_config = load_and_optimize_model(model_id)
 
         # Integrate context prompt into the transcription process if provided
         decoder_input_ids = integrate_context_prompt(
             context_prompt=args.context_prompt,
-            processor=processor,
-            device=device,
-            torch_dtype=torch_dtype
+            processor=model_config.processor,
+            device=model_config.device,
+            torch_dtype=model_config.torch_dtype
         )
 
         # Prepare generate_kwargs for initial transcription
@@ -373,11 +374,13 @@ def main():
 
         # Create ModelResources instance
         model_resources = ModelResources(
-            model=model,
-            processor=processor,
-            device=device,
-            torch_dtype=torch_dtype,
-            generate_kwargs=generate_kwargs
+            model=model_config.model,
+            processor=model_config.processor,
+            device=model_config.device,
+            torch_dtype=model_config.torch_dtype,
+            generate_kwargs=generate_kwargs,
+            batch_size=model_config.batch_size,
+            chunk_length_s=model_config.chunk_length_s
         )
 
         # Create TranscriptionConfig instance with context prompt
@@ -402,6 +405,9 @@ def main():
         # Determine output paths using the helper function
         output_dir, base_name = construct_output_paths(args, audio_input)
         
+        # Initialize processed_segments as an empty set (in-memory)
+        processed_segments = set()
+
         # Submit diarization job and wait for its completion
         try:
             diarization_segments = perform_diarization(
@@ -409,10 +415,10 @@ def main():
                 audio_input.input_url, 
                 args.num_speakers, 
                 config.timeouts.diarization_timeout,
-                config.timeouts.job_status_timeout  # Pass job_status_timeout
+                config.timeouts.job_status_timeout
             )
         except Exception as e:
-            logging.exception(f"Diarization error: {e}")  # Capture stack trace
+            logging.exception(f"Diarization error: {e}")
             if os.path.exists(audio_input.local_audio_path) and audio_input.should_delete_local_audio_file:
                 try:
                     os.remove(audio_input.local_audio_path)
@@ -428,7 +434,7 @@ def main():
     
         # Instantiate the Metadata and Transcript objects
         metadata = Metadata(
-            transcriber=Transcriber(name="YAWT", version="0.4.0"),
+            transcriber=Transcriber(name="YAWT", version="0.5.0"),
             created_at=datetime.now(timezone.utc)
         )
         add_yawt_metadata_extension(metadata, config, args, args.context_prompt)
@@ -453,13 +459,14 @@ def main():
     
         logging.info(f"Processing cost: Whisper=${whisper_cost:.4f}, Diarization=${diarization_cost:.4f}, Total=${total_cost:.4f}")
     
-        # Initial transcription without secondary languages
+        # Initial transcription with in-memory processed_segments
         transcription_segments, failed_segments = transcribe_segments(
             diarization_segments=diarization_segments,
             audio_array=audio_array,
             model_resources=model_resources,
             config=transcription_config,
-            main_language=args.main_language  # Now mandatory
+            main_language=args.main_language,
+            processed_segments=processed_segments  # Pass the in-memory processed_segments
         )
     
         # Retry transcription for any failed segments using secondary language if provided

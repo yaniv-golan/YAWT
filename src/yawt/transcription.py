@@ -17,7 +17,10 @@ import tenacity
 from yawt.constants import (
     MODEL_RETURN_DICT_IN_GENERATE,
     MODEL_OUTPUT_SCORES,
-    MODEL_USE_CACHE
+    MODEL_USE_CACHE,
+    WHISPER_LARGE_V3,
+    WHISPER_LARGE_V3_TURBO,
+    MODEL_SETTINGS,
 )
 
 # Define constants
@@ -43,7 +46,17 @@ def get_device() -> torch.device:
     else:
         return torch.device("cpu")
 
-def load_and_optimize_model(model_id: str) -> Tuple[AutoModelForSpeechSeq2Seq, AutoProcessor, torch.device, torch.dtype]:
+# Define ModelConfig dataclass
+@dataclass
+class ModelConfig:
+    model: AutoModelForSpeechSeq2Seq
+    processor: AutoProcessor
+    device: torch.device
+    torch_dtype: torch.dtype
+    batch_size: int
+    chunk_length_s: float
+
+def load_and_optimize_model(model_id: str) -> ModelConfig:
     """
     Loads and optimizes the speech-to-text model.
 
@@ -51,7 +64,7 @@ def load_and_optimize_model(model_id: str) -> Tuple[AutoModelForSpeechSeq2Seq, A
         model_id (str): The identifier for the model to load.
 
     Returns:
-        tuple: Contains the model, processor, device, and torch data type.
+        ModelConfig: The loaded transcription model.
     """
     try:
         logging.info(f"Loading model '{model_id}'...")
@@ -78,11 +91,11 @@ def load_and_optimize_model(model_id: str) -> Tuple[AutoModelForSpeechSeq2Seq, A
         # Check transformers version for feature support
         import transformers
         version = tuple(map(int, transformers.__version__.split('.')))
-        
+
         # use_safetensors supported from 4.26.0
         if version >= (4, 26, 0):
             model_args["use_safetensors"] = True
-                
+
         # attn_implementation supported from 4.28.0 and requires PyTorch 2.0+
         if version >= (4, 28, 0) and torch.__version__ >= "2.0.0":
             if torch_dtype in [torch.float16, torch.bfloat16]:
@@ -115,7 +128,24 @@ def load_and_optimize_model(model_id: str) -> Tuple[AutoModelForSpeechSeq2Seq, A
         except Exception as e:
             logging.warning(f"Failed to optimize model with torch.compile: {e}")
 
-        return model, processor, device, torch_dtype
+        # Retrieve model settings based on model_id
+        model_settings = MODEL_SETTINGS.get(model_id)
+        if not model_settings:
+            raise ValueError(f"Unsupported model_id: {model_id}")
+
+        batch_size = model_settings["batch_size"]
+        chunk_length_s = model_settings["chunk_length_s"]
+
+        logging.info(f"Model settings: batch_size={batch_size}, chunk_length_s={chunk_length_s}")
+
+        return ModelConfig(
+            model=model,
+            processor=processor,
+            device=device,
+            torch_dtype=torch_dtype,
+            batch_size=batch_size,
+            chunk_length_s=chunk_length_s
+        )
 
     except FileNotFoundError as fnf_error:
         logging.exception(f"Model file not found: {fnf_error}")
@@ -156,7 +186,7 @@ def model_generate_with_timeout(
         adjusted_kwargs['output_scores'] = MODEL_OUTPUT_SCORES                      # Include scores
         logging.debug(f"Final generate_kwargs before generation: {adjusted_kwargs}")
         return model.generate(**adjusted_kwargs, use_cache=MODEL_USE_CACHE)
-    
+
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future = executor.submit(generate)
         try:
@@ -168,10 +198,10 @@ def model_generate_with_timeout(
 def compute_per_token_confidence(outputs: Any) -> List[float]:
     """
     Computes per-token confidence scores from model outputs.
-    
+
     Args:
         outputs: The GenerateOutput object from model.generate().
-    
+
     Returns:
         List of per-token confidence scores.
     """
@@ -180,7 +210,7 @@ def compute_per_token_confidence(outputs: Any) -> List[float]:
         for score in outputs.scores:
             probabilities = F.softmax(score, dim=-1)
             top_prob, _ = torch.max(probabilities, dim=-1)
-            token_confidences.extend(top_prob.tolist())  
+            token_confidences.extend(top_prob.tolist())
         return token_confidences
     else:
         logging.warning("Output does not contain scores. Returning full confidence.")
@@ -190,10 +220,10 @@ def compute_per_token_confidence(outputs: Any) -> List[float]:
 def aggregate_confidence(token_confidences: List[float]) -> float:
     """
     Aggregates per-token confidence scores into an overall confidence score.
-    
+
     Args:
         token_confidences: List of per-token confidence scores.
-    
+
     Returns:
         The average confidence score.
     """
@@ -222,7 +252,7 @@ def extract_language_token(generated_ids: torch.Tensor, tokenizer: Any) -> Optio
     tokens = tokenizer.convert_ids_to_tokens(generated_ids.cpu().flatten().tolist())
 
     logging.debug(f"Generated tokens: {tokens}")
-    
+
     for token in tokens[:5]:  # Check only the first few tokens
         if token.startswith('<|') and token.endswith('|>'):
             lang_code = token[2:-2]  # Remove '<|' and '|>'
@@ -230,7 +260,7 @@ def extract_language_token(generated_ids: torch.Tensor, tokenizer: Any) -> Optio
                 return lang_code
         elif token != '<|startoftranscript|>':
             break
-    
+
     return None
 
 @dataclass
@@ -240,6 +270,8 @@ class ModelResources:
     device: torch.device
     torch_dtype: torch.dtype
     generate_kwargs: Dict[str, Any]
+    batch_size: int
+    chunk_length_s: float
 
 @dataclass
 class TranscriptionConfig:
@@ -248,7 +280,7 @@ class TranscriptionConfig:
     buffer_tokens: int
     confidence_threshold: float
     context_prompt: Optional[str] = None  # Store context prompt in config
-    overlap_duration: float = 1.0  # Overlap duration in seconds
+    overlap_duration: float = 2.0        # Added overlap duration attribute
 
 def prepare_input_ids(context, tokenizer, device):
     # Encode the context and ensure the tensor is of type Long
@@ -278,7 +310,7 @@ def transcribe_single_segment(
         assert inputs['input_features'].shape[0] == 1, f"Batch size must be 1, got {inputs['input_features'].shape[0]}"
         # Ensures that each transcription is processed individually to maintain consistency and prevent unexpected behavior
         assert inputs['input_features'].ndim == 3, f"Expected 3D tensor for input_features, got {inputs['input_features'].ndim}D"
-        
+
         # Verify other input tensors if present
         for key, tensor in inputs.items():
             if isinstance(tensor, torch.Tensor):
@@ -290,26 +322,45 @@ def transcribe_single_segment(
         forced_decoder_ids = processor.get_decoder_prompt_ids(language=main_language, task="transcribe")
         adjusted_generate_kwargs["forced_decoder_ids"] = forced_decoder_ids
 
-        input_length = inputs['input_features'].shape[1]  
+        input_length = inputs['input_features'].shape[1]
 
-        # Updated max_length retrieval
+        # Add detailed debug logging for model config
+        logging.debug(f"Segment {idx}: Model config type: {type(model.config)}")
+        logging.debug(f"Segment {idx}: Model config attributes: {dir(model.config)}")
+        
+        # Check max_length in model config
         if hasattr(model.config, 'max_length'):
-            max_length = model.config.max_length
-        elif hasattr(model.config, 'decoder') and hasattr(model.config.decoder, 'max_length'):
-            max_length = model.config.decoder.max_length
-        else:
-            max_length = max_target_positions
+            logging.debug(f"Segment {idx}: Direct max_length from config: {model.config.max_length}")
+        
+        # Check decoder config
+        if hasattr(model.config, 'decoder'):
+            logging.debug(f"Segment {idx}: Decoder config type: {type(model.config.decoder)}")
+            logging.debug(f"Segment {idx}: Decoder config attributes: {dir(model.config.decoder)}")
+            if hasattr(model.config.decoder, 'max_length'):
+                logging.debug(f"Segment {idx}: Decoder max_length: {model.config.decoder.max_length}")
+        
+        # Check max_target_positions
+        logging.debug(f"Segment {idx}: max_target_positions from config: {max_target_positions}")
+
+        # Updated max_length retrieval with logging
+        max_length = max_target_positions
+        logging.debug(f"Segment {idx}: Using max_target_positions: {max_length} (fixed value)")
 
         prompt_length = adjusted_generate_kwargs.get('decoder_input_ids', torch.tensor([], device=device, dtype=torch_dtype)).shape[-1]
-        
-        # Calculate the remaining capacity for new tokens
-        remaining_length = max_length - input_length - prompt_length - buffer_tokens - 1
-        # Set max_new_tokens to the minimum of DEFAULT_MAX_NEW_TOKENS and the remaining capacity
-        max_new_tokens = min(DEFAULT_MAX_NEW_TOKENS, remaining_length)
-        # Ensure max_new_tokens is at least 1
-        max_new_tokens = max(max_new_tokens, 1)
 
-        logging.debug(f"Segment {idx}: input_length: {input_length}, prompt_length: {prompt_length}, remaining_length: {remaining_length}, max_new_tokens: {max_new_tokens}")
+        # Add debug prints
+        logging.debug(f"Segment {idx}: input_length = {input_length}")
+        logging.debug(f"Segment {idx}: prompt_length = {prompt_length}")
+        logging.debug(f"Segment {idx}: buffer_tokens = {buffer_tokens}")
+        logging.debug(f"Segment {idx}: Calculation: {max_length} - {input_length} - {prompt_length} - {buffer_tokens} - 1")
+        
+        remaining_length = max_length - input_length - prompt_length - buffer_tokens - 1
+        max_new_tokens = min(DEFAULT_MAX_NEW_TOKENS, remaining_length)
+        max_new_tokens = max(max_new_tokens, 1)
+        
+        logging.debug(f"Segment {idx}: remaining_length before min/max = {remaining_length}")
+        logging.debug(f"Segment {idx}: DEFAULT_MAX_NEW_TOKENS = {DEFAULT_MAX_NEW_TOKENS}")
+        logging.debug(f"Segment {idx}: final max_new_tokens = {max_new_tokens}")
 
         adjusted_generate_kwargs["max_new_tokens"] = min(
             adjusted_generate_kwargs.get("max_new_tokens", max_new_tokens),
@@ -330,7 +381,7 @@ def transcribe_single_segment(
                 model=model,
                 inputs=inputs,
                 generate_kwargs=adjusted_generate_kwargs,
-                transcription_timeout=transcription_timeout  
+                transcription_timeout=transcription_timeout
             )
 
         # Debug logging for outputs
@@ -342,7 +393,7 @@ def transcribe_single_segment(
             # Assert that we're only processing one sequence
             assert outputs.sequences.shape[0] == 1, f"Expected 1 sequence, got {outputs.sequences.shape[0]}"
             assert outputs.sequences.ndim == 2, f"Expected 2D tensor for output sequences, got {outputs.sequences.ndim}D"
-            
+
             transcription = processor.batch_decode(outputs.sequences, skip_special_tokens=True)[0].strip()
             token_confidences = compute_per_token_confidence(outputs)
             overall_confidence = aggregate_confidence(token_confidences)
@@ -391,7 +442,6 @@ def evaluate_confidence(
 
     return is_high_confidence and is_main_language
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def transcribe_with_retry(
     idx: int,
     chunk_start: float,
@@ -399,97 +449,183 @@ def transcribe_with_retry(
     inputs: Dict[str, torch.Tensor],
     model_resources: ModelResources,
     config: TranscriptionConfig,
-    main_language: str  # Now mandatory
+    main_language: str
 ) -> Tuple[Optional[str], float, Optional[str], Optional[torch.Tensor]]:
-    try:
-        return transcribe_single_segment(
-            idx=idx,
-            chunk_start=chunk_start,
-            chunk_end=chunk_end,
-            inputs=inputs,
-            model_resources=model_resources,
-            config=config,
-            main_language=main_language
-        )
-    except TimeoutException:
-        logging.warning(f"Timeout occurred for segment {idx}. Retrying...")
-        raise
+    """Custom retry implementation without tenacity"""
+    
+    max_attempts = 3
+    attempt = 1
+    last_result = None
+
+    while attempt <= max_attempts:
+        try:
+            logging.debug(f"TRANSCRIBE - Segment {idx}, Attempt {attempt}/{max_attempts}")
+            result = transcribe_single_segment(
+                idx=idx,
+                chunk_start=chunk_start,
+                chunk_end=chunk_end,
+                inputs=inputs,
+                model_resources=model_resources,
+                config=config,
+                main_language=main_language
+            )
+
+            if result is not None:
+                transcription, confidence, language, tokens = result
+                if transcription and confidence >= 0.3:
+                    logging.debug(f"TRANSCRIBE - Segment {idx}: Successful transcription with confidence {confidence:.3f}")
+                    return result
+                else:
+                    logging.debug(f"TRANSCRIBE - Segment {idx}: Low confidence ({confidence:.3f}) on attempt {attempt}")
+                    last_result = result
+                    attempt += 1  # Only increment attempt if we need to retry
+                    continue  # Try next attempt
+            else:
+                logging.debug(f"TRANSCRIBE - Segment {idx}: Received None result on attempt {attempt}")
+                last_result = None
+                attempt += 1  # Only increment attempt if we need to retry
+                continue
+
+        except Exception as e:
+            logging.error(f"TRANSCRIBE - Segment {idx}: Attempt {attempt} failed with error: {e}", exc_info=True)
+            last_result = None
+            attempt += 1  # Only increment attempt if we need to retry
+            continue
+
+    # If we get here, we've exhausted all attempts
+    if last_result is not None and last_result[1] >= 0.3:
+        logging.warning(f"TRANSCRIBE - Segment {idx}: Using last obtained result with confidence {last_result[1]:.3f}")
+        return last_result
+    else:
+        logging.error(f"TRANSCRIBE - Segment {idx}: All {max_attempts} attempts failed or confidence below threshold.")
+        return None, 0.0, None, None
 
 def chunk_iter(inputs, feature_extractor, chunk_len, stride_left, stride_right, sampling_rate):
+    """
+    Iterate over chunks of audio with dynamic stride adjustment.
+    
+    Args:
+        inputs: Input audio array
+        feature_extractor: Feature extractor for processing chunks
+        chunk_len: Length of each chunk in samples
+        stride_left: Left stride length in samples
+        stride_right: Right stride length in samples
+        sampling_rate: Audio sampling rate
+    
+    Yields:
+        Dict containing processed chunk data
+    """
     inputs_len = inputs.shape[0]
-    step = chunk_len - stride_left - stride_right
-    for chunk_start_idx in range(0, inputs_len, step):
-        chunk_end_idx = chunk_start_idx + chunk_len
+    chunk_start_idx = 0
+    
+    # Validate and adjust stride lengths if necessary
+    total_stride = stride_left + stride_right
+    if chunk_len <= total_stride:
+        logging.debug(f"Adjusting stride lengths. Chunk length: {chunk_len}, Total stride: {total_stride}")
+        # Reduce stride lengths proportionally
+        adjusted_total_stride = chunk_len // 2
+        stride_left = adjusted_total_stride // 2
+        stride_right = adjusted_total_stride - stride_left
+        logging.debug(f"Adjusted strides - Left: {stride_left}, Right: {stride_right}")
+
+    while chunk_start_idx < inputs_len:
+        chunk_end_idx = min(chunk_start_idx + chunk_len, inputs_len)
         chunk = inputs[chunk_start_idx:chunk_end_idx]
+        
         if len(chunk) == 0:
             break
+            
         processed = feature_extractor(chunk, sampling_rate=sampling_rate, return_tensors="pt")
-        _stride_left = 0 if chunk_start_idx == 0 else stride_left
+        
+        # Adjust strides for first and last chunks
+        _stride_left = stride_left if chunk_start_idx != 0 else 0
         is_last = chunk_end_idx >= inputs_len
-        _stride_right = 0 if is_last else stride_right
+        _stride_right = stride_right if not is_last else 0
 
         chunk_len_actual = chunk.shape[0]
         stride = (chunk_len_actual, _stride_left, _stride_right)
+        
         if chunk_len_actual > _stride_left:
             yield {"is_last": is_last, "stride": stride, **processed}
-        if is_last:
-            break
 
-def _find_longest_common_sequence(sequences, tokenizer):
-    sequence = [tok_id for tok_id in sequences[0].tolist() if tok_id not in tokenizer.all_special_ids]
-    for new_seq in sequences[1:]:
-        new_sequence = [tok_id for tok_id in new_seq.tolist() if tok_id not in tokenizer.all_special_ids]
+        # Calculate next chunk start position
+        increment = chunk_len - _stride_left - _stride_right
+        increment = max(increment, chunk_len // 4)  # Ensure minimum forward progress
+        chunk_start_idx += increment
+        
+        logging.debug(f"Chunk progress - Start: {chunk_start_idx}, End: {chunk_end_idx}, Increment: {increment}")
 
-        index = 0
-        max_match = 0.0
-        for i in range(1, len(new_sequence) + 1):
-            matches = np.sum(np.array(sequence[-i:]) == np.array(new_sequence[:i]))
-            matching = matches / i
-            if matches > 1 and matching > max_match:
-                index = i
-                max_match = matching
-        sequence.extend(new_sequence[index:])
-    return np.array(sequence)
+def merge_sequences(sequences):
+    if not sequences:
+        return []
+
+    merged_sequence = sequences[0].tolist()
+
+    for next_seq in sequences[1:]:
+        next_sequence = next_seq.tolist()
+        # Simple overlap handling
+        overlap_size = min(len(merged_sequence), len(next_sequence)) // 2
+        overlap_found = False
+        for i in range(overlap_size, 0, -1):
+            if merged_sequence[-i:] == next_sequence[:i]:
+                merged_sequence.extend(next_sequence[i:])
+                overlap_found = True
+                break
+        if not overlap_found:
+            merged_sequence.extend(next_sequence)
+    return merged_sequence
 
 def transcribe_segments(
     diarization_segments: List[Dict[str, Any]],
     audio_array: np.ndarray,
     model_resources: ModelResources,
     config: TranscriptionConfig,
-    main_language: str  # Now mandatory
+    main_language: str,
+    processed_segments: Optional[set] = None
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    model = model_resources.model
-    processor = model_resources.processor
-    device = model_resources.device
-    torch_dtype = model_resources.torch_dtype
-    confidence_threshold = config.confidence_threshold
-    overlap_duration = config.overlap_duration
-    sampling_rate = SAMPLING_RATE
+    """
+    Transcribe audio segments with dynamic stride adjustment for short segments.
+    """
+    if processed_segments is None:
+        processed_segments = set()  # Initialize as empty set within the run
 
     transcription_segments = []
     failed_segments = []
 
-    for idx, segment in enumerate(tqdm(diarization_segments, desc="Transcribing Segments", unit="segment")):
+    for idx, segment in enumerate(tqdm(diarization_segments, desc="Transcribing segments"), start=1):
+        segment_id = (segment['speaker_id'], round(segment['start'], 3), round(segment['end'], 3))
+        if segment_id in processed_segments:
+            logging.info(f"Segment {idx}: Skipping already processed segment: {segment_id}")
+            continue
+
+        logging.debug(f"Segment {idx}: Starting transcription for segment: {segment_id}")
         try:
             original_start = segment['start']
             original_end = segment['end']
 
             # Adjust start and end times with overlap
-            adjusted_start = max(original_start - overlap_duration, 0.0)
-            adjusted_end = min(original_end + overlap_duration, audio_array.shape[0] / sampling_rate)
+            if not transcription_segments:
+                adjusted_start = original_start
+            else:
+                adjusted_start = transcription_segments[-1]['end']
 
-            start_sample = int(adjusted_start * sampling_rate)
-            end_sample = int(adjusted_end * sampling_rate)
+            adjusted_end = min(original_end + config.overlap_duration, audio_array.shape[0] / SAMPLING_RATE)
+
+            start_sample = int(adjusted_start * SAMPLING_RATE)
+            end_sample = int(adjusted_end * SAMPLING_RATE)
             chunk = audio_array[start_sample:end_sample]
 
-            # Determine chunk parameters
+            # Calculate chunk parameters with dynamic adjustment
             chunk_length_s = adjusted_end - adjusted_start
-            stride_length_s = overlap_duration
-
-            # Prepare chunks with overlapping
-            chunk_len_samples = int((chunk_length_s + stride_length_s * 2) * sampling_rate)
-            stride_left_samples = int(stride_length_s * sampling_rate)
-            stride_right_samples = int(stride_length_s * sampling_rate)
+            stride_length_s = min(config.overlap_duration, chunk_length_s / 4)  # Limit stride to 1/4 of chunk length
+            
+            chunk_len_samples = int(chunk_length_s * SAMPLING_RATE)
+            stride_left_samples = int(stride_length_s * SAMPLING_RATE)
+            stride_right_samples = int(stride_length_s * SAMPLING_RATE)
+            
+            logging.debug(f"Segment {idx} parameters - Length: {chunk_length_s:.2f}s, "
+                        f"Stride: {stride_length_s:.2f}s, "
+                        f"Samples: {chunk_len_samples}")
 
             sequences = []
             overall_confidences = []
@@ -497,13 +633,14 @@ def transcribe_segments(
 
             for chunk_data in chunk_iter(
                 inputs=chunk,
-                feature_extractor=processor.feature_extractor,
+                feature_extractor=model_resources.processor.feature_extractor,
                 chunk_len=chunk_len_samples,
                 stride_left=stride_left_samples,
                 stride_right=stride_right_samples,
-                sampling_rate=sampling_rate
+                sampling_rate=SAMPLING_RATE
             ):
-                inputs = {k: v.to(device).to(torch_dtype) for k, v in chunk_data.items() if k != 'is_last' and k != 'stride'}
+                inputs = {k: v.to(model_resources.device).to(model_resources.torch_dtype) 
+                          for k, v in chunk_data.items() if k not in ['is_last', 'stride']}
                 chunk_stride = chunk_data['stride']
                 transcription, overall_confidence, language_token, generated_sequence = transcribe_with_retry(
                     idx=idx,
@@ -521,14 +658,19 @@ def transcribe_segments(
 
             # Merge overlapping sequences
             if sequences:
-                merged_sequence = _find_longest_common_sequence(sequences, processor.tokenizer)
-                transcription = processor.decode(merged_sequence, skip_special_tokens=True).strip()
+                merged_sequence = merge_sequences(sequences)
+                transcription = model_resources.processor.decode(merged_sequence, skip_special_tokens=True).strip()
                 overall_confidence = np.mean(overall_confidences)
                 language_token = language_tokens[0] if language_tokens else None
             else:
                 transcription = ""
                 overall_confidence = 0.0
                 language_token = None
+
+            # Evaluate confidence
+            low_confidence = overall_confidence < config.confidence_threshold or not evaluate_confidence(
+                overall_confidence, language_token, threshold=config.confidence_threshold, main_language=main_language
+            )
 
             transcript = {
                 'speaker_id': segment['speaker_id'],
@@ -537,21 +679,21 @@ def transcribe_segments(
                 'text': transcription,
                 'confidence': overall_confidence,
                 'language': language_token,
-                'low_confidence': overall_confidence < confidence_threshold or not evaluate_confidence(
-                    overall_confidence, language_token, threshold=confidence_threshold, main_language=main_language
-                )
+                'low_confidence': low_confidence
             }
             transcription_segments.append(transcript)
+            processed_segments.add(segment_id)  # Track processed segment
+
+            logging.info(f"Segment {idx}: Successfully transcribed.")
 
         except RetryError:
-            logging.error(f"Segment {idx} failed after multiple retry attempts due to timeout.")
-            failed_segments.append({'segment_index': idx, 'segment': segment, 'reason': "Timeout after multiple retries"})
-            continue
+            logging.error(f"Segment {idx}: Failed after multiple retry attempts due to timeout.")
+            failed_segments.append(segment)
         except Exception as e:
-            logging.exception(f"Failed to transcribe segment {idx} ({segment}): {e}")
-            failed_segments.append({'segment_index': idx, 'segment': segment, 'reason': str(e)})
-            continue
+            logging.exception(f"Segment {idx}: Unexpected error during transcription: {e}")
+            failed_segments.append(segment)
 
+    logging.info(f"Transcription completed: {len(transcription_segments)} successful, {len(failed_segments)} failed.")
     return transcription_segments, failed_segments
 
 def retry_transcriptions(
@@ -561,7 +703,7 @@ def retry_transcriptions(
     transcription_segments: List[Dict[str, Any]],
     model_resources: ModelResources,
     config: TranscriptionConfig,
-    secondary_language: str  # Now optional
+    secondary_language: str
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     model = model_resources.model
     processor = model_resources.processor
@@ -589,27 +731,19 @@ def retry_transcriptions(
 
     retry_failed_segments = []
     for failure in tqdm(failed_segments, desc="Retrying Segments", unit="segment"):
+        logging.debug(f"Starting retry for failed segment: {failure}")
         idx = failure['segment_index']
         segment = diarization_segments[idx]
         original_start = segment['start']
         original_end = segment['end']
 
         try:
-            # Adjust generate_kwargs for secondary language
-            forced_decoder_ids = processor.get_decoder_prompt_ids(language=lang, task="transcribe")
-            generate_kwargs["forced_decoder_ids"] = forced_decoder_ids
-
-            # Create a new ModelResources instance with updated generate_kwargs
-            current_model_resources = ModelResources(
-                model=model,
-                processor=processor,
-                device=device,
-                torch_dtype=torch_dtype,
-                generate_kwargs=generate_kwargs
-            )
-
             # Adjust start and end times with overlap
-            adjusted_start = max(original_start - config.overlap_duration, 0.0)
+            if not transcription_segments:
+                adjusted_start = segment['start']
+            else:
+                adjusted_start = transcription_segments[-1]['end']
+
             adjusted_end = min(original_end + config.overlap_duration, audio_array.shape[0] / sampling_rate)
 
             start_sample = int(adjusted_start * sampling_rate)
@@ -621,7 +755,7 @@ def retry_transcriptions(
             stride_length_s = config.overlap_duration
 
             # Prepare chunks with overlapping
-            chunk_len_samples = int((chunk_length_s + stride_length_s * 2) * sampling_rate)
+            chunk_len_samples = int(chunk_length_s * sampling_rate)
             stride_left_samples = int(stride_length_s * sampling_rate)
             stride_right_samples = int(stride_length_s * sampling_rate)
 
@@ -655,7 +789,7 @@ def retry_transcriptions(
 
             # Merge overlapping sequences
             if sequences:
-                merged_sequence = _find_longest_common_sequence(sequences, processor.tokenizer)
+                merged_sequence = merge_sequences(sequences)
                 transcription = processor.decode(merged_sequence, skip_special_tokens=True).strip()
                 overall_confidence = np.mean(overall_confidences)
                 language_token = language_tokens[0] if language_tokens else None
@@ -664,26 +798,28 @@ def retry_transcriptions(
                 overall_confidence = 0.0
                 language_token = None
 
-            if transcription and evaluate_confidence(overall_confidence, language_token, threshold=confidence_threshold, main_language=lang):
-                # Update the existing transcription segment
-                for t_seg in transcription_segments:
-                    if (t_seg['speaker_id'] == segment['speaker_id'] and 
-                        t_seg['start'] == original_start and 
-                        t_seg['end'] == original_end):
-                        t_seg['text'] = transcription if transcription is not None else ""
-                        t_seg['confidence'] = overall_confidence
-                        t_seg['language'] = language_token
-                        t_seg['low_confidence'] = overall_confidence < confidence_threshold or not evaluate_confidence(
-                            overall_confidence, language_token, threshold=confidence_threshold, main_language=lang
-                        )
-                        break
-            else:
-                logging.warning(f"Retry failed to transcribe segment {idx} with sufficient confidence.")
-                retry_failed_segments.append(failure)
+            # Evaluate confidence
+            low_confidence = overall_confidence < confidence_threshold or not evaluate_confidence(
+                overall_confidence, language_token, threshold=confidence_threshold, main_language=lang
+            )
+
+            transcript = {
+                'speaker_id': segment['speaker_id'],
+                'start': original_start,
+                'end': original_end,
+                'text': transcription,
+                'confidence': overall_confidence,
+                'language': language_token,
+                'low_confidence': low_confidence
+            }
+            transcription_segments.append(transcript)
+
+            # Since transcription is successful, do not add to failed_segments
+            continue  # Proceed to the next segment
+
         except RetryError:
             logging.error(f"Segment {idx} failed after multiple retry attempts due to timeout.")
             retry_failed_segments.append({'segment_index': idx, 'segment': segment, 'reason': "Timeout after multiple retries"})
-            continue
         except Exception as e:
             logging.exception(f"Retry for segment {idx} failed: {e}")
             retry_failed_segments.append({'segment_index': idx, 'segment': segment, 'reason': str(e)})
@@ -694,13 +830,13 @@ def retry_transcriptions(
 def integrate_context_prompt(context_prompt: Optional[str], processor, device, torch_dtype):
     """
     Integrates context prompt into transcription by tokenizing and preparing decoder input ids.
-    
+
     Args:
         context_prompt: The context prompt string.
         processor: The processor for the transcription model.
         device: The device to run the model on.
         torch_dtype: The data type for torch tensors.
-    
+
     Returns:
         torch.Tensor or None: The decoder input ids if context prompt is provided, else None.
     """
@@ -730,5 +866,5 @@ __all__ = [
     'prepare_input_ids',
     'integrate_context_prompt',
     'chunk_iter',
-    '_find_longest_common_sequence',
+    'merge_sequences',
 ]

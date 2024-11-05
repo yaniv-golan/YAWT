@@ -58,3 +58,14 @@ transcription:
 # It's recommended to keep sensitive information like API keys secure and not commit them to version control.
 pyannote_token: "your_pyannote_api_token_here"  # Pyannote API token (can also be set via PYANNOTE_TOKEN environment variable)
 openai_key: "your_openai_api_key_here"          # OpenAI API key (can also be set via OPENAI_KEY environment variable)
+
+# Supported Models
+# ---------------
+# List of models that can be used for transcription.
+supported_models:
+  - name: whisper-large-v3
+    batch_size: 16
+    chunk_length_s: 30
+  - name: whisper-large-v3-turbo
+    batch_size: 24
+    chunk_length_s: 30
