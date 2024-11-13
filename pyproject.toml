@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "yawt"
-version = "0.5.0"
+version = "0.5.2"
 description = "YAWT (Yet Another Whisper-based Transcriber) is a transcription tool that leverages OpenAI's Whisper model to deliver accurate and efficient audio-to-text conversion."
 authors = ["Yaniv Golan <yaniv@golan.name>"]
 license = "MIT" 

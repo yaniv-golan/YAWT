@@ -91,7 +91,7 @@ if PLATFORM == 'windows':
 
 setup(
     name="YAWT",
-    version="0.5.0",
+    version="0.5.2",
     description="Yet Another Whisper-based Transcriber",
     options={"build_exe": build_exe_options},
     executables=[
