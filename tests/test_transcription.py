@@ -14,7 +14,8 @@ from yawt.transcription import (
     is_valid_language_code,
     evaluate_confidence,
     TimeoutException,
-    ModelLoadError
+    ModelLoadError,
+    WhisperProcessor
 )
 
 import torch
@@ -38,7 +39,7 @@ def test_get_device_cpu():
         device = get_device()
         assert device.type == 'cpu'
 
-@patch('yawt.transcription.AutoProcessor.from_pretrained')
+@patch('yawt.transcription.WhisperProcessor.from_pretrained')
 @patch('yawt.transcription.AutoModelForSpeechSeq2Seq.from_pretrained')
 @patch('torch.compile')
 def test_load_and_optimize_model(mock_torch_compile, mock_model_pretrained, mock_proc_pretrained):
@@ -57,23 +58,40 @@ def test_load_and_optimize_model(mock_torch_compile, mock_model_pretrained, mock
     mock_processor_instance = MagicMock()
     mock_proc_pretrained.return_value = mock_processor_instance
     
-    with patch('yawt.transcription.get_device', return_value=mock_device):
-        model, processor, device, dtype = load_and_optimize_model('test-model-id')
+    # Mock MODEL_SETTINGS
+    mock_model_settings = {
+        'test-model-id': {
+            'batch_size': 16,
+            'chunk_length_s': 30
+        }
+    }
+    
+    # Mock transformers version
+    mock_transformers = MagicMock()
+    mock_transformers.__version__ = "4.25.0"  # Version before both use_safetensors and attn_implementation support
+    
+    with patch('yawt.transcription.get_device', return_value=mock_device), \
+         patch('yawt.transcription.MODEL_SETTINGS', mock_model_settings), \
+         patch.dict('sys.modules', {'transformers': mock_transformers}):
+        model_config = load_and_optimize_model('test-model-id')
         
         # Assertions to ensure correct behavior
         mock_model_pretrained.assert_called_with(
             'test-model-id',
-            torch_dtype=torch.float16 if mock_device.type in ["cuda", "mps"] else torch.float32,
+            torch_dtype=torch.float32,
             low_cpu_mem_usage=True,
-            use_safetensors=True,
-            attn_implementation="sdpa"
+            trust_remote_code=True
         )
-        mock_proc_pretrained.assert_called_with('test-model-id')
+        mock_proc_pretrained.assert_called_with('test-model-id', trust_remote_code=True)
         mock_torch_compile.assert_called_once_with(mock_model_instance, mode="reduce-overhead")
-        assert model == mock_model_instance
-        assert processor == mock_processor_instance
-        assert device == mock_device
-        assert dtype == torch.float32
+        
+        # Assert the ModelConfig attributes
+        assert model_config.model == mock_model_instance
+        assert model_config.processor == mock_processor_instance
+        assert model_config.device == mock_device
+        assert model_config.torch_dtype == torch.float32
+        assert model_config.batch_size == 16
+        assert model_config.chunk_length_s == 30
 
 def test_is_valid_language_code():
     # Assuming 'en' is a valid code from iso639

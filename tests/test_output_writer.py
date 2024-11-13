@@ -1,10 +1,9 @@
-
 import os
 import json
 import pytest
 from unittest.mock import patch, mock_open, MagicMock
 from yawt.output_writer import ensure_directory_exists, write_transcriptions
-from yawt.stj import StandardTranscriptionJSON, Metadata, Transcriber, Transcript, Speaker, Segment, Word
+from stjlib import StandardTranscriptionJSON, Metadata, Transcriber, Transcript, Speaker, Segment, Word
 from datetime import datetime, timezone
 
 @pytest.fixture
@@ -70,12 +69,42 @@ def test_write_transcriptions_stj(mock_file, mock_makedirs, mock_stj, tmp_path):
     base_name = str(tmp_path / "output")
     write_transcriptions(['stj'], base_name, mock_stj)
 
-    mock_file.assert_called_once_with(f"{base_name}.stj.json", 'w', encoding='utf-8')
+    mock_file.assert_called_once_with(f"{base_name}.stjson", 'w', encoding='utf-8')
     handle = mock_file()
 
-    expected_data = mock_stj.to_dict()
+    # Get the actual written data
     written_data = ''.join(args[0] for args, kwargs in handle.write.call_args_list)
-    assert json.loads(written_data) == expected_data
+    written_json = json.loads(written_data)
+
+    # Verify the STJ structure
+    assert 'stj' in written_json
+    stj_data = written_json['stj']['stj']  # Navigate to the actual STJ content
+    
+    # Verify metadata
+    assert 'metadata' in stj_data
+    assert 'transcriber' in stj_data['metadata']
+    assert stj_data['metadata']['transcriber']['name'] == 'TestTranscriber'
+    
+    # Verify transcript
+    assert 'transcript' in stj_data
+    assert 'speakers' in stj_data['transcript']
+    assert 'segments' in stj_data['transcript']
+    
+    # Verify segments content
+    segments = stj_data['transcript']['segments']
+    assert len(segments) == 2
+    
+    # Verify first segment
+    assert segments[0]['start'] == 0.0
+    assert segments[0]['end'] == 2.5
+    assert segments[0]['text'] == "Hello, world!"
+    assert segments[0]['speaker_id'] == "Speaker1"
+    
+    # Verify second segment
+    assert segments[1]['start'] == 2.5
+    assert segments[1]['end'] == 5.0
+    assert segments[1]['text'] == "How are you?"
+    assert segments[1]['speaker_id'] == "Speaker2"
 
 @patch('os.makedirs')
 @patch('builtins.open', new_callable=mock_open)
@@ -97,10 +126,10 @@ def test_write_transcriptions_multiple_formats(mock_print, mock_file, mock_maked
     base_name = str(tmp_path / "output")
     write_transcriptions(['text', 'stj', 'srt'], base_name, mock_stj)
 
-    assert mock_file.call_count == 3  # Adjusted to match the number of output formats
+    assert mock_file.call_count == 3
     mock_print.assert_any_call("\nGenerated Output Files:")
     mock_print.assert_any_call(f"- {base_name}.txt")
-    mock_print.assert_any_call(f"- {base_name}.stj.json")
+    mock_print.assert_any_call(f"- {base_name}.stjson")
     mock_print.assert_any_call(f"- {base_name}.srt")
 
 @patch('os.makedirs')
